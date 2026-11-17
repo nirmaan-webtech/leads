@@ -88,7 +88,7 @@ export default {
      const form=await req.formData(), username=String(form.get("username")||"").trim(), password=String(form.get("password")||"");
      if(!/^[a-zA-Z0-9_.-]{3,40}$/.test(username)||password.length<14)return html("Invalid username or password. Password must be at least 14 characters.",400);
      const salt=crypto.getRandomValues(new Uint8Array(16)), key=await crypto.subtle.importKey("raw",enc.encode(password),"PBKDF2",false,["deriveBits"]);
-     const bits=await crypto.subtle.deriveBits({name:"PBKDF2",salt,iterations:310000,hash:"SHA-256"},key,256);
+     const bits=await crypto.subtle.deriveBits({name:"PBKDF2",salt,iterations:100000,hash:"SHA-256"},key,256);
      const passHash="pbkdf2$310000$"+hex(salt)+"$"+hex(bits);
      await env.DB.prepare("INSERT INTO app_users(username,password_hash) VALUES(?,?)").bind(username,passHash).run();
      return Response.redirect(new URL("/login",req.url),303);
@@ -141,8 +141,7 @@ fetch("${endpoint}").then(r=>r.json()).then(rows=>{const tb=document.querySelect
    if(path==="/runs")return await tablePage("Research runs","Runs","/api/runs",[["started_at","Started"],["completed_at","Completed"],["status","Status"],["target_count","Target"],["discovered_count","Found"],["qualified_count","Qualified"],["duplicate_count","Duplicates"],["failed_count","Failed"],["notes","Notes"]]);
    return json({error:"Not found"},404);
   } catch(e){
-    const diagnostic = path==="/setup" || path==="/health" ? String(e?.stack || e) : undefined;
-    return json({error:"Internal server error",detail:diagnostic},500);
+    return json({error:"Internal server error"},500);
   }
  },
  async scheduled(event,env,ctx){
