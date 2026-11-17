@@ -40,7 +40,113 @@ a{color:inherit;text-decoration:none}.layout{display:flex;min-height:100vh}.side
 <a href="/logout">Sign out</a></nav></aside><main class="main"><div class="top"><div><div class="eyebrow">India · B2B prospecting</div><h1>${escapeHtml(title)}</h1></div><span class="pill">Private workspace</span></div>${content}</main></div></body></html>`;
 }
 const loginPage = (error="") => html(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · Nirmaan Lead Hunter</title><style>body{background:#090d16;color:#edf2fb;font:15px system-ui;display:grid;place-items:center;min-height:100vh;margin:0}.card{background:#111827;border:1px solid #253047;border-radius:16px;padding:30px;width:min(92vw,420px)}h1{font-size:24px}.muted{color:#96a3b8}label{display:block;margin:14px 0 6px;color:#96a3b8}input{width:100%;box-sizing:border-box;padding:12px;border-radius:8px;border:1px solid #314059;background:#0b1220;color:white}button{margin-top:18px;width:100%;padding:12px;background:#d7b56d;border:0;border-radius:8px;font-weight:700}.err{color:#ff9292}</style></head><body><form class="card" method="post" action="/login"><div class="muted">NIRMAAN WEBTECH</div><h1>Lead Hunter</h1><p class="muted">Sign in to your private prospecting dashboard.</p><label>Username</label><input name="username" autocomplete="username" required><label>Password</label><input name="password" type="password" autocomplete="current-password" required><button>Sign in</button><p class="err">${escapeHtml(error)}</p></form></body></html>`);
+
+const DISCOVERY_CITIES=[
+{city:"Delhi",state:"Delhi",bbox:[28.48,76.84,28.88,77.35]},
+{city:"Mumbai",state:"Maharashtra",bbox:[18.89,72.75,19.28,73.05]},
+{city:"Bengaluru",state:"Karnataka",bbox:[12.82,77.42,13.15,77.75]},
+{city:"Chennai",state:"Tamil Nadu",bbox:[12.88,80.12,13.22,80.32]},
+{city:"Hyderabad",state:"Telangana",bbox:[17.25,78.25,17.55,78.65]},
+{city:"Kolkata",state:"West Bengal",bbox:[22.43,88.25,22.68,88.48]},
+{city:"Pune",state:"Maharashtra",bbox:[18.40,73.72,18.66,74.00]},
+{city:"Ahmedabad",state:"Gujarat",bbox:[22.92,72.48,23.15,72.72]},
+{city:"Jaipur",state:"Rajasthan",bbox:[26.78,75.68,27.02,76.00]},
+{city:"Lucknow",state:"Uttar Pradesh",bbox:[26.72,80.82,26.98,81.08]},
+{city:"Chandigarh",state:"Chandigarh",bbox:[30.65,76.68,30.82,76.85]},
+{city:"Ludhiana",state:"Punjab",bbox:[30.80,75.72,30.98,76.00]},
+{city:"Amritsar",state:"Punjab",bbox:[31.58,74.78,31.75,74.98]},
+{city:"Jalandhar",state:"Punjab",bbox:[31.27,75.48,31.38,75.65]},
+{city:"Patiala",state:"Punjab",bbox:[30.28,76.32,30.42,76.48]},
+{city:"Surat",state:"Gujarat",bbox:[21.10,72.72,21.28,72.92]},
+{city:"Indore",state:"Madhya Pradesh",bbox:[22.62,75.78,22.82,76.00]},
+{city:"Bhopal",state:"Madhya Pradesh",bbox:[23.15,77.30,23.32,77.48]},
+{city:"Kochi",state:"Kerala",bbox:[9.88,76.20,10.10,76.38]},
+{city:"Coimbatore",state:"Tamil Nadu",bbox:[10.95,76.90,11.08,77.08]}
+];
+function engClean(v){return typeof v==="string"?v.trim().slice(0,500):"";}
+function engUrl(raw){
+ if(!raw)return null;let s=String(raw).trim();if(!/^https?:\/\//i.test(s))s="https://"+s;
+ try{const u=new URL(s);const h=u.hostname.toLowerCase();if(!["http:","https:"].includes(u.protocol)||!h||u.username||u.password||h==="localhost"||h.endsWith(".local")||h==="127.0.0.1"||h==="0.0.0.0"||/^10\./.test(h)||/^192\.168\./.test(h)||/^172\.(1[6-9]|2\d|3[01])\./.test(h))return null;return u.toString();}catch{return null;}
+}
+function engTag(t,keys){for(const k of keys){const v=engClean(t&&t[k]);if(v)return v;}return "";}
+function engCategory(t){for(const k of ["shop","office","craft","amenity","healthcare","tourism"]){if(t[k]&&t[k]!=="yes")return k+": "+String(t[k]).replace(/_/g," ");}return "Local business";}
+function engDedupe(el){return "osm:"+el.type+":"+el.id;}
+function engSource(el){return "https://www.openstreetmap.org/"+el.type+"/"+el.id;}
+function engQuery(city){
+ const b=city.bbox;
+ return '[out:json][timeout:22];(nwr["name"]["shop"]('+b.join(",")+');nwr["name"]["office"]('+b.join(",")+');nwr["name"]["craft"]('+b.join(",")+');nwr["name"]["amenity"~"restaurant|cafe|clinic|dentist|doctors|hospital|school|college|bank|pharmacy|beauty_salon|fast_food|car_repair|fuel"]('+b.join(",")+');nwr["name"]["healthcare"]('+b.join(",")+'););out center tags meta 70;';
+}
+async function engDiscover(city){
+ const r=await fetch("https://overpass-api.de/api/interpreter",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded;charset=UTF-8","accept":"application/json"},body:"data="+encodeURIComponent(engQuery(city)),signal:AbortSignal.timeout(28000)});
+ if(!r.ok)throw new Error("OpenStreetMap Overpass HTTP "+r.status);
+ const d=await r.json();return Array.isArray(d.elements)?d.elements:[];
+}
+function engRecord(el,city){
+ const t=el.tags||{},name=engClean(t.name);if(!name)return null;
+ const website=engUrl(engTag(t,["contact:website","website","url"]));
+ const phone=engTag(t,["contact:phone","phone","mobile"]),email=engTag(t,["contact:email","email"]);
+ const instagram=engTag(t,["contact:instagram","instagram"]),facebook=engTag(t,["contact:facebook","facebook"]);
+ const address=[t["addr:housenumber"],t["addr:street"],t["addr:suburb"],t["addr:postcode"]].filter(Boolean).join(", ");
+ const domain=website?new URL(website).hostname.replace(/^www\./,"").toLowerCase():null;
+ const ev={source:"OpenStreetMap",osm_type:el.type,osm_id:el.id,osm_version:el.version||null,osm_timestamp:el.timestamp||null,observed_at:new Date().toISOString(),activity_signal:"A public map listing exists; this does not independently prove current trading or revenue."};
+ return {id:uuid(),dedupe:engDedupe(el),name,category:engCategory(t),city:engClean(t["addr:city"])||city.city,state:engClean(t["addr:state"])||city.state,address,phone,email,website,domain,instagram,facebook,source:engSource(el),evidence:ev};
+}
+async function engAudit(biz){
+ const checked=new Date().toISOString();
+ if(!biz.website_url)return {status:"missing",audit:null,findings:["No website URL was present in the public map listing."]};
+ const url=engUrl(biz.website_url);if(!url)return {status:"invalid_url",audit:null,findings:["Website URL is invalid or restricted."]};
+ const start=Date.now();let res=null,htmlText="",error="";
+ try{res=await fetch(url,{redirect:"manual",headers:{"accept":"text/html,application/xhtml+xml","user-agent":"NirmaanLeadHunter/1.0 website-audit"},signal:AbortSignal.timeout(9000)});if(res.status>=300&&res.status<400)error="Redirect requires manual destination review.";else if((res.headers.get("content-type")||"").includes("text/html"))htmlText=(await res.text()).slice(0,250000);}catch(e){error=String(e&&e.message||e).slice(0,220);}
+ const elapsed=Date.now()-start,title=(htmlText.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1]||"";
+ const cleanTitle=title.replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim().slice(0,180);
+ const viewport=/<meta[^>]+name\s*=\s*["']viewport["']/i.test(htmlText),description=/<meta[^>]+name\s*=\s*["']description["']/i.test(htmlText),h1=(htmlText.match(/<h1\b/gi)||[]).length;
+ const findings=[];if(error)findings.push(error);if(res&&res.status>=400)findings.push("Homepage returned HTTP "+res.status+".");if(!url.startsWith("https://"))findings.push("Website does not use HTTPS.");if(!cleanTitle)findings.push("HTML title tag missing.");if(!viewport)findings.push("Responsive viewport meta tag missing.");if(!description)findings.push("Meta description missing.");if(!h1)findings.push("No H1 heading detected.");if(htmlText.length<1200&&res&&res.ok)findings.push("Very small HTML response; content may be incomplete or client-rendered.");
+ const status=!res||error?"unreachable":res.status>=400?"http_error":findings.length?"needs_review":"reachable_basic_checks_passed";
+ return {status,findings,audit:{id:uuid(),checked,requested:url,final:url,http:res?res.status:null,ssl:url.startsWith("https://")?1:0,mobile:viewport?"viewport_meta_present":"viewport_meta_missing",desktop:res?"http_response_received":"not_reached",title:cleanTitle,evidence:{elapsed_ms:elapsed,content_type:res?res.headers.get("content-type"):null,html_bytes:htmlText.length,has_viewport:viewport,has_meta_description:description,h1_count:h1,limitations:["No browser rendering or real viewport emulation.","No Lighthouse/PageSpeed score.","Forms, checkout and interactive flows not tested.","Homepage response only."]}}};
+}
+function engOutreach(biz,findings){
+ const noSite=!biz.website_url,issue=noSite?"no website URL appeared in its public business listing":(findings[0]||"the homepage needs a closer technical review");
+ return {subject:(noSite?"Website for ":"Website improvement idea for ")+biz.name,message:"Hi "+biz.name+" team,\n\nI came across your business listing in "+biz.city+", "+biz.state+". I noticed that "+issue+". A clear, mobile-friendly website can help customers understand your services and contact you directly.\n\nNirmaan WebTech builds practical business websites. If improving your online presence is on your roadmap, I can share a few specific ideas for your business.\n\nWould you be open to a brief conversation?\n\nRegards,\nNirmaan WebTech",strategy:noSite?"Offer a starter website; manually confirm the business is currently operating before sending.":"Offer a short homepage review based on recorded checks; manually validate findings before sending."};
+}
+async function engRun(env){
+ const runId=uuid(),started=new Date().toISOString();
+ await env.DB.prepare("INSERT INTO research_runs(id,started_at,target_count,status,notes) VALUES(?,?,50,'running','OpenStreetMap discovery; one city per run; trading status not independently verified')").bind(runId,started).run();
+ let discovered=0,qualified=0,duplicates=0,failed=0,audited=0,drafts=0,city=null,elements=[];
+ try{
+  const cur=await env.DB.prepare("SELECT value FROM app_settings WHERE key='city_cursor'").first();
+  const idx=Number(cur&&cur.value||0)%DISCOVERY_CITIES.length;city=DISCOVERY_CITIES[idx];
+  await env.DB.prepare("INSERT OR REPLACE INTO app_settings(key,value,updated_at) VALUES('city_cursor',?,CURRENT_TIMESTAMP)").bind(String((idx+1)%DISCOVERY_CITIES.length)).run();
+  elements=await engDiscover(city);const seen=new Set();
+  for(const el of elements){
+   const b=engRecord(el,city);if(!b)continue;if(seen.has(b.dedupe)){duplicates++;continue;}seen.add(b.dedupe);
+   const confidence=50+(b.phone?15:0)+(b.email?15:0)+(b.website?10:0)+(b.address?10:0);
+   const score=b.website?35:65;
+   const ins=await env.DB.prepare("INSERT OR IGNORE INTO businesses(id,dedupe_key,name,category,city,state,country,address,phone,email,website_url,domain,instagram_url,facebook_url,discovery_source,activity_evidence,website_status,qualification_status,confidence_score,opportunity_score,first_seen_at,last_verified_at,raw_evidence_json,source_url) VALUES(?,?,?,?,?,?,'India',?,?,?,?,?,?,?,?,?,'unverified','pending',?,?,?,?,?,?)")
+    .bind(b.id,b.dedupe,b.name,b.category,b.city,b.state,b.address||null,b.phone||null,b.email||null,b.website,b.domain,b.instagram||null,b.facebook||null,"OpenStreetMap",b.evidence.activity_signal,confidence,score,started,started,JSON.stringify(b.evidence),b.source).run();
+   if(ins.meta&&ins.meta.changes)discovered++;else duplicates++;
+  }
+  const candidates=await env.DB.prepare("SELECT * FROM businesses WHERE city=? AND state=? AND website_status='unverified' ORDER BY opportunity_score DESC LIMIT 10").bind(city.city,city.state).all();
+  for(const biz of candidates.results){
+   try{
+    const a=await engAudit(biz),isLead=["missing","unreachable","http_error","needs_review"].includes(a.status);
+    await env.DB.prepare("UPDATE businesses SET website_status=?,qualification_status=?,last_verified_at=?,opportunity_score=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(a.status,isLead?"qualified":"screened_out",new Date().toISOString(),a.status==="missing"?85:a.status==="unreachable"||a.status==="http_error"?90:a.status==="needs_review"?70:25,biz.id).run();
+    if(a.audit){const x=a.audit;await env.DB.prepare("INSERT INTO website_audits(id,business_id,checked_at,requested_url,final_url,http_status,ssl_valid,mobile_test_status,desktop_test_status,broken_links_count,findings_json,evidence_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,biz.id,x.checked,x.requested,x.final,x.http,x.ssl,x.mobile,x.desktop,null,JSON.stringify(a.findings),JSON.stringify(x.evidence)).run();audited++;}
+    if(isLead){qualified++;const refreshed=await env.DB.prepare("SELECT * FROM businesses WHERE id=?").bind(biz.id).first();const o=engOutreach(refreshed,a.findings);await env.DB.prepare("INSERT INTO outreach_drafts(id,business_id,channel,subject,message,strategy,status) VALUES(?,?,?,?,?,?,'draft')").bind(uuid(),biz.id,refreshed.email?"email":"manual_review",o.subject,o.message,o.strategy).run();drafts++;}
+   }catch(e){failed++;}
+  }
+  const status=failed?"partial":"completed";
+  await env.DB.prepare("UPDATE research_runs SET completed_at=?,discovered_count=?,qualified_count=?,duplicate_count=?,failed_count=?,status=?,notes=? WHERE id=?").bind(new Date().toISOString(),discovered,qualified,duplicates,failed,status,"OpenStreetMap · "+city.city+", "+city.state+" · "+elements.length+" map objects scanned · "+audited+" website checks · "+drafts+" unsent drafts · trading status not independently confirmed",runId).run();
+  return {runId,status,city:city.city,state:city.state,osmObjects:elements.length,discovered,qualified,duplicates,failed,audited,drafts};
+ }catch(e){await env.DB.prepare("UPDATE research_runs SET completed_at=?,status='failed',notes=? WHERE id=?").bind(new Date().toISOString(),String(e&&e.message||e).slice(0,350),runId).run();throw e;}
+}
+
 async function api(req, env, path) {
+  if(path==="/api/run" && req.method==="POST"){
+    const last=await env.DB.prepare("SELECT value FROM app_settings WHERE key='last_manual_run'").first();
+    if(last&&Date.now()-Date.parse(last.value)<10*60*1000)return json({error:"Wait 10 minutes between manual runs."},429);
+    await env.DB.prepare("INSERT OR REPLACE INTO app_settings(key,value,updated_at) VALUES('last_manual_run',?,CURRENT_TIMESTAMP)").bind(new Date().toISOString()).run();
+    try{return json(await engRun(env));}catch(e){return json({error:"Discovery run failed",detail:String(e&&e.message||e)},502);}
+  }
   if (path==="/api/summary") {
     const [b,a,r,o]=await Promise.all([
       env.DB.prepare("SELECT COUNT(*) n FROM businesses").first(),
@@ -128,7 +234,7 @@ export default {
     const stats=[["Businesses found",b.n],["Qualified leads",q.n],["Website audits",a.n],["Outreach drafts",d.n]];
     const cards=stats.map(([l,v])=>`<div class="stat"><small>${l}</small><div class="value">${v}</div></div>`).join("");
     const rows=latest.results.map(x=>`<tr><td>${escapeHtml(x.started_at)}</td><td>${escapeHtml(x.status)}</td><td>${x.discovered_count}</td><td>${x.qualified_count}</td><td>${escapeHtml(x.notes||"—")}</td></tr>`).join("");
-    return html(shell("Overview",`<div class="grid">${cards}</div><div class="panel"><div class="row"><div><h2>Research engine</h2><div class="hint">Two-hour schedule is registered. Discovery remains safely inactive until a permitted provider is configured; no synthetic lead records are created.</div></div><span class="pill warn">Provider required</span></div><p class="hint">Target per run: 50 qualified prospects · Geography: India · Duplicate prevention: enabled through unique business keys.</p></div><div class="panel"><h2>Recent research runs</h2><div class="tablewrap"><table><thead><tr><th>Started</th><th>Status</th><th>Found</th><th>Qualified</th><th>Notes</th></tr></thead><tbody>${rows||'<tr><td colspan="5" class="empty">No runs yet</td></tr>'}</tbody></table></div></div>`));
+    return html(shell("Overview",`<div class="grid">${cards}</div><div class="panel"><div class="row"><div><h2>Research engine</h2><div class="hint">OpenStreetMap public data · one city per run · duplicate filtering · up to 10 homepage checks · unsent outreach drafts. Map listing does not prove current trading.</div></div><button class="btn" id="runNow">Run discovery now</button></div><p class="hint" id="runStatus">Automatic schedule: every 2 hours · India city rotation · 50 target records (actual qualified count may be lower).</p></div><script>document.getElementById("runNow").addEventListener("click",async()=>{const b=document.getElementById("runNow"),s=document.getElementById("runStatus");b.disabled=true;b.textContent="Running…";s.textContent="Scanning city and checking candidate websites…";try{const r=await fetch("/api/run",{method:"POST"}),d=await r.json();s.textContent=r.ok?("Run "+d.status+" · "+d.city+", "+d.state+" · found "+d.discovered+" · qualified "+d.qualified+" · duplicates "+d.duplicates+" · audits "+d.audited+" · drafts "+d.drafts):("Run failed: "+(d.detail||d.error));}catch(e){s.textContent="Request failed: "+e.message;}finally{b.disabled=false;b.textContent="Run discovery now";}});</script><div class="panel"><h2>Recent research runs</h2><div class="tablewrap"><table><thead><tr><th>Started</th><th>Status</th><th>Found</th><th>Qualified</th><th>Notes</th></tr></thead><tbody>${rows||'<tr><td colspan="5" class="empty">No runs yet</td></tr>'}</tbody></table></div></div>`));
    }
    const tablePage=async(title,active,endpoint,cols)=>{
      return html(shell(title,`<div class="panel"><div class="row"><div><h2>${title}</h2><div class="hint">Latest 100 records. Business export is available in CSV format.</div></div><a class="btn secondary" href="/api/export.csv">Export CSV</a></div><div class="tablewrap"><table id="data"><thead><tr>${cols.map(c=>`<th>${c[1]}</th>`).join("")}</tr></thead><tbody><tr><td colspan="${cols.length}" class="empty">Loading…</td></tr></tbody></table></div></div><script>
@@ -145,8 +251,6 @@ fetch("${endpoint}").then(r=>r.json()).then(rows=>{const tb=document.querySelect
   }
  },
  async scheduled(event,env,ctx){
-   const provider=await env.DB.prepare("SELECT value FROM app_settings WHERE key='discovery_provider_enabled'").first();
-   const runId=uuid();
-   await env.DB.prepare("INSERT INTO research_runs(id,started_at,target_count,status,notes) VALUES(?,CURRENT_TIMESTAMP,50,'skipped',?)").bind(runId,provider?.value==="true"?"Provider enabled but adapter not configured":"No discovery provider configured; skipped to avoid fake leads").run();
+   ctx.waitUntil(engRun(env).catch(async e=>{await env.DB.prepare("INSERT INTO research_runs(id,started_at,completed_at,target_count,status,notes) VALUES(?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,50,'failed',?)").bind(uuid(),String(e&&e.message||e).slice(0,350)).run();}));
  }
 };
