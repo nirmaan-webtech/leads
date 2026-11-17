@@ -16,7 +16,7 @@ India-wide prospecting dashboard on Cloudflare Workers + D1.
 - Lead confidence and opportunity scores are separate estimates, not proof of revenue or buying intent.
 
 ## Website checks
-- Homepage HTTP response (following redirects and recording the final URL), HTTPS, title, meta description, viewport meta, H1, responsive CSS media-query heuristic.
+- Homepage HTTP response, HTTPS, title, meta description, viewport meta, H1, and responsive CSS media-query heuristic. Redirects are not followed; they are flagged for manual review to reduce SSRF risk.
 - Detects HTML forms without submitting them.
 - Checks up to 10 same-origin links using HEAD requests.
 - Extracts up to 10 public email strings.
@@ -37,7 +37,7 @@ India-wide prospecting dashboard on Cloudflare Workers + D1.
 ## Privacy and compliance
 Do not scrape Google Maps, Instagram or Facebook. Only use permitted public APIs and published business contact details. Review applicable provider terms and outreach/privacy requirements before campaigns.
 
-## QA fixes in `fix/lead-hunter-qa`
+## Production QA fixes
 - Provider attribution is stored on discovered records and in run summaries.
 - New business inserts are capped at 50 per run.
 - Photon fallback uses reverse lookups with OSM tag filters instead of searching generic words as place names.
