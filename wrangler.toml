@@ -1,0 +1,11 @@
+name = "nirmaan-ai-lead-hunter"
+main = "src/worker.js"
+compatibility_date = "2026-11-17"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nirmaan-ai-lead-hunter"
+database_id = "70f26c8a-2c47-4b94-ab48-ed787abadff1"
+
+[triggers]
+crons = ["0 */2 * * *"]
