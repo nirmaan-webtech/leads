@@ -17,12 +17,9 @@ async function sha(text) { return hex(await crypto.subtle.digest("SHA-256", enc.
 async function cookieSession(req, env) {
   const raw = req.headers.get("Cookie") || "";
   const token = raw.split(";").map(x=>x.trim()).find(x=>x.startsWith("nlh_session="))?.slice(12);
-  if (!token) return null;
-  const [id, mac] = token.split(".");
-  if (!id || !mac) return null;
-  const valid = await sha(id + env.APP_SECRET);
-  if (valid !== mac) return null;
-  const row = await env.DB.prepare("SELECT id, username FROM app_users WHERE id=?").bind(Number(id)).first();
+  if (!token || !/^[a-f0-9]{64}$/.test(token)) return null;
+  const tokenHash = await sha(token);
+  const row = await env.DB.prepare("SELECT u.id,u.username FROM app_sessions s JOIN app_users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at > datetime('now')").bind(tokenHash).first();
   return row || null;
 }
 async function requireAuth(req, env) { return cookieSession(req, env); }
@@ -105,10 +102,17 @@ export default {
      const key=await crypto.subtle.importKey("raw",enc.encode(password),"PBKDF2",false,["deriveBits"]);
      const bits=await crypto.subtle.deriveBits({name:"PBKDF2",salt,iterations:Number(parts[1]),hash:"SHA-256"},key,256);
      if(hex(bits)!==parts[3])return loginPage("Invalid username or password.");
-     const token=uuid(), mac=await sha(token+env.APP_SECRET), session=token+"."+mac;
-     return new Response(null,{status:303,headers:{"location":"/","set-cookie":"nlh_session="+session+"; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=43200"}});
+     const token=Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,"0")).join("");
+     const tokenHash=await sha(token);
+     await env.DB.prepare("INSERT INTO app_sessions(token_hash,user_id,expires_at) VALUES(?,?,datetime('now','+12 hours'))").bind(tokenHash,user.id).run();
+     return new Response(null,{status:303,headers:{"location":"/","set-cookie":"nlh_session="+token+"; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=43200"}});
    }
-   if(path==="/logout")return new Response(null,{status:303,headers:{"location":"/login","set-cookie":"nlh_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0"}});
+   if(path==="/logout"){
+     const raw=req.headers.get("Cookie")||"";
+     const token=raw.split(";").map(x=>x.trim()).find(x=>x.startsWith("nlh_session="))?.slice(12);
+     if(token && /^[a-f0-9]{64}$/.test(token)) await env.DB.prepare("DELETE FROM app_sessions WHERE token_hash=?").bind(await sha(token)).run();
+     return new Response(null,{status:303,headers:{"location":"/login","set-cookie":"nlh_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0"}});
+   }
    const user=await requireAuth(req,env);
    if(!user)return Response.redirect(new URL("/login",req.url),302);
    if(path.startsWith("/api/"))return await api(req,env,path);
