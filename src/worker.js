@@ -143,7 +143,7 @@ async function engRun(env){
 async function api(req, env, path) {
   if(path==="/api/run" && req.method==="POST"){
     const last=await env.DB.prepare("SELECT value FROM app_settings WHERE key='last_manual_run'").first();
-    if(last&&Date.now()-Date.parse(last.value)<10*60*1000)return json({error:"Wait 10 minutes between manual runs."},429);
+    if(last&&Date.now()-Date.parse(last.value)<60*1000)return json({error:"Please wait 60 seconds between manual runs."},429);
     await env.DB.prepare("INSERT OR REPLACE INTO app_settings(key,value,updated_at) VALUES('last_manual_run',?,CURRENT_TIMESTAMP)").bind(new Date().toISOString()).run();
     try{return json(await engRun(env));}catch(e){return json({error:"Discovery run failed",detail:String(e&&e.message||e)},502);}
   }
