@@ -121,7 +121,7 @@ async function engDiscover(city){
 function engRecord(el,city){
  const t=el.tags||{},name=engClean(t.name);if(!name)return null;
  const office=String(t.office||"").toLowerCase(),amenity=String(t.amenity||"").toLowerCase();
- if(["government","diplomatic","newspaper"].includes(office)||["school","college","university","government"].includes(amenity))return null;
+ if(["government","diplomatic","newspaper","political_party","association"].includes(office)||["school","college","university","government"].includes(amenity))return null;
  const website=engUrl(engTag(t,["contact:website","website","url"]));
  const phone=engTag(t,["contact:phone","phone","mobile"]),email=engTag(t,["contact:email","email"]);
  const instagram=engTag(t,["contact:instagram","instagram"]),facebook=engTag(t,["contact:facebook","facebook"]);
