@@ -37,7 +37,7 @@ a{color:inherit;text-decoration:none}.layout{display:flex;min-height:100vh}.side
 <a class="${active==="Audits"?"active":""}" href="/audits">Website audits</a>
 <a class="${active==="Outreach"?"active":""}" href="/outreach">Outreach drafts</a>
 <a class="${active==="Runs"?"active":""}" href="/runs">Research runs</a>
-<a href="/logout">Sign out</a></nav></aside><main class="main"><div class="top"><div><div class="eyebrow">India · B2B prospecting</div><h1>${escapeHtml(title)}</h1></div><span class="pill">Private workspace</span></div>${content}</main></div></body></html>`;
+<form method="post" action="/logout" style="margin:0"><button class="btn secondary" style="padding:9px 12px">Sign out</button></form></nav></aside><main class="main"><div class="top"><div><div class="eyebrow">India · B2B prospecting</div><h1>${escapeHtml(title)}</h1></div><span class="pill">Private workspace</span></div>${content}</main></div></body></html>`;
 }
 const loginPage = (error="") => html(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · Nirmaan Lead Hunter</title><style>body{background:#090d16;color:#edf2fb;font:15px system-ui;display:grid;place-items:center;min-height:100vh;margin:0}.card{background:#111827;border:1px solid #253047;border-radius:16px;padding:30px;width:min(92vw,420px)}h1{font-size:24px}.muted{color:#96a3b8}label{display:block;margin:14px 0 6px;color:#96a3b8}input{width:100%;box-sizing:border-box;padding:12px;border-radius:8px;border:1px solid #314059;background:#0b1220;color:white}button{margin-top:18px;width:100%;padding:12px;background:#d7b56d;border:0;border-radius:8px;font-weight:700}.err{color:#ff9292}</style></head><body><form class="card" method="post" action="/login"><div class="muted">NIRMAAN WEBTECH</div><h1>Lead Hunter</h1><p class="muted">Sign in to your private prospecting dashboard.</p><label>Username</label><input name="username" autocomplete="username" required><label>Password</label><input name="password" type="password" autocomplete="current-password" required><button>Sign in</button><p class="err">${escapeHtml(error)}</p></form></body></html>`);
 
@@ -133,7 +133,7 @@ async function engAudit(biz){
  if(!biz.website_url)return {status:"missing",audit:null,findings:["No website URL was present in the public map listing."]};
  const url=engUrl(biz.website_url);if(!url)return {status:"invalid_url",audit:null,findings:["Website URL is invalid or restricted."]};
  const start=Date.now();let res=null,htmlText="",error="",finalUrl=url;
- try{res=await fetch(url,{redirect:"follow",headers:{"accept":"text/html,application/xhtml+xml","user-agent":"NirmaanLeadHunter/1.0 website-audit"},signal:AbortSignal.timeout(12000)});finalUrl=res.url||url;if(!engUrl(finalUrl))throw new Error("Final redirect URL is invalid or restricted.");if((res.headers.get("content-type")||"").includes("text/html"))htmlText=(await res.text()).slice(0,250000);}catch(e){error=String(e&&e.message||e).slice(0,220);}
+ try{res=await fetch(url,{redirect:"manual",headers:{"accept":"text/html,application/xhtml+xml","user-agent":"NirmaanLeadHunter/1.0 website-audit"},signal:AbortSignal.timeout(12000)});finalUrl=res.url||url;if(res.status>=300&&res.status<400)throw new Error("Website redirected; redirect target was not fetched for SSRF safety.");if((res.headers.get("content-type")||"").includes("text/html")){const reader=res.body?.getReader();let total=0,chunks=[];if(reader){while(total<250000){const part=await reader.read();if(part.done)break;const chunk=part.value.slice(0,250000-total);chunks.push(chunk);total+=chunk.length;if(total>=250000){await reader.cancel();break;}}const merged=new Uint8Array(total);let offset=0;for(const c of chunks){merged.set(c,offset);offset+=c.length;}htmlText=new TextDecoder().decode(merged);}}}catch(e){error=String(e&&e.message||e).slice(0,220);}
  const elapsed=Date.now()-start,title=(htmlText.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1]||"";
  const cleanTitle=title.replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim().slice(0,180);
  const viewport=/<meta[^>]+name\s*=\s*["']viewport["']/i.test(htmlText),description=/<meta[^>]+name\s*=\s*["']description["']/i.test(htmlText),h1=(htmlText.match(/<h1\b/gi)||[]).length;
@@ -144,7 +144,7 @@ async function engAudit(biz){
  const broken=[];let linksChecked=0;
  for(const link of links){try{const lr=await fetch(link,{method:"HEAD",redirect:"follow",signal:AbortSignal.timeout(3000)});linksChecked++;if(lr.status>=400)broken.push({url:link,status:lr.status});}catch(e){linksChecked++;broken.push({url:link,status:"request_failed"});}}
  const findings=[];if(error)findings.push(error);if(res&&res.status>=400)findings.push("Homepage returned HTTP "+res.status+".");if(!finalUrl.startsWith("https://"))findings.push("Final website URL does not use HTTPS.");if(!cleanTitle)findings.push("HTML title tag missing.");if(!viewport)findings.push("Responsive viewport meta tag missing.");if(!description)findings.push("Meta description missing.");if(!h1)findings.push("No H1 heading detected.");if(!mediaQueries)findings.push("No responsive CSS media query detected in homepage HTML.");if(broken.length)findings.push(broken.length+" same-origin links failed or could not be checked.");if(htmlText.length<1200&&res&&res.ok)findings.push("Very small HTML response; content may be incomplete or client-rendered.");
- const status=!res||error?"unreachable":res.status>=400?"http_error":findings.length?"needs_review":"reachable_basic_checks_passed";
+ const status=!res||error?(String(error).includes("redirected")?"redirect_requires_manual_review":"unreachable"):res.status>=400?"http_error":findings.length?"needs_review":"reachable_basic_checks_passed";
  return {status,findings,audit:{id:uuid(),checked,requested:url,final:finalUrl,http:res?res.status:null,ssl:finalUrl.startsWith("https://")?1:0,mobile:viewport?"viewport_meta_present":"viewport_meta_missing",desktop:res?"http_response_received":"not_reached",title:cleanTitle,linksChecked,brokenLinks:broken,forms,emails,mobileScore:Math.max(0,100-(viewport?0:35)-(mediaQueries?0:20)),auditScore:Math.max(0,100-(res&&res.status<400?0:35)-(url.startsWith("https://")?0:15)-(cleanTitle?0:10)-(viewport?0:15)-(description?0:5)-(h1?0:5)-Math.min(broken.length*3,15)),evidence:{elapsed_ms:elapsed,content_type:res?res.headers.get("content-type"):null,html_bytes:htmlText.length,has_viewport:viewport,has_meta_description:description,h1_count:h1,media_query_count:mediaQueries,forms_detected:forms,limitations:["Mobile score is a markup heuristic, not a real mobile browser test.","Forms are detected, never submitted.","Only up to 10 same-origin links are checked with HEAD.","No Lighthouse/PageSpeed or visual rendering."]}}};
 }
 async function engEmailCheck(email){
@@ -187,7 +187,7 @@ async function engRun(env){
   const candidates=await env.DB.prepare("SELECT * FROM businesses WHERE city=? AND state=? AND website_status='unverified' ORDER BY opportunity_score DESC LIMIT 10").bind(city.city,city.state).all();
   for(const biz of candidates.results){
    try{
-    const a=await engAudit(biz),isLead=["missing","unreachable","http_error","needs_review"].includes(a.status);
+    const a=await engAudit(biz),isLead=["missing","unreachable","http_error","needs_review","redirect_requires_manual_review"].includes(a.status);
     const extracted=(a.audit&&a.audit.emails||[]).find(e=>!biz.email)||biz.email||null;
     const emailStatus=extracted?await engEmailCheck(extracted):"not_provided",phoneStatus=engPhoneCheck(biz.phone);
     const mobileScore=a.audit?a.audit.mobileScore:0;
@@ -211,6 +211,7 @@ async function engRun(env){
 
 async function api(req, env, path) {
   if(path==="/api/run" && req.method==="POST"){
+    if(req.headers.get("Origin")!==new URL(req.url).origin)return json({error:"Invalid request origin."},403);
     const last=await env.DB.prepare("SELECT value FROM app_settings WHERE key='last_manual_run'").first();
     if(last&&Date.now()-Date.parse(last.value)<60*1000)return json({error:"Please wait 60 seconds between manual runs."},429);
     await env.DB.prepare("INSERT OR REPLACE INTO app_settings(key,value,updated_at) VALUES('last_manual_run',?,CURRENT_TIMESTAMP)").bind(new Date().toISOString()).run();
@@ -257,7 +258,8 @@ async function api(req, env, path) {
     sql+=" ORDER BY opportunity_score DESC";
     const rows=await env.DB.prepare(sql).bind(...p).all();
     const keys=["name","category","city","state","phone","email","phone_verification","email_verification","website_url","website_status","activity_status","activity_score","qualification_status","qualification_reason","confidence_score","opportunity_score","source_url","discovery_source"];
-    const csv=[keys.join(","),...rows.results.map(r=>keys.map(k=>'"'+String(r[k]??"").replace(/"/g,'""')+'"').join(","))].join("\r\n");
+    const safeCell=v=>{let x=String(v??"");if(/^[\s\u0000-\u001f]*[=+\-@]/.test(x))x="'"+x;return '"'+x.replace(/"/g,'""')+'"';};
+    const csv=[keys.join(","),...rows.results.map(r=>keys.map(k=>safeCell(r[k])).join(","))].join("\r\n");
     return new Response(csv,{headers:{"content-type":"text/csv; charset=utf-8","content-disposition":"attachment; filename=lead-hunter-businesses.csv"}});
   }
   return json({error:"Not found"},404);
@@ -297,7 +299,8 @@ export default {
      await env.DB.prepare("INSERT INTO app_sessions(token_hash,user_id,expires_at) VALUES(?,?,datetime('now','+12 hours'))").bind(tokenHash,user.id).run();
      return new Response(null,{status:303,headers:{"location":"/","set-cookie":"nlh_session="+token+"; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=43200"}});
    }
-   if(path==="/logout"){
+   if(path==="/logout" && req.method==="POST"){
+     if(req.headers.get("Origin")!==new URL(req.url).origin)return json({error:"Invalid request origin."},403);
      const raw=req.headers.get("Cookie")||"";
      const token=raw.split(";").map(x=>x.trim()).find(x=>x.startsWith("nlh_session="))?.slice(12);
      if(token && /^[a-f0-9]{64}$/.test(token)) await env.DB.prepare("DELETE FROM app_sessions WHERE token_hash=?").bind(await sha(token)).run();
