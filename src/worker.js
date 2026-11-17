@@ -216,11 +216,19 @@ async function api(req, env, path) {
     return json({businesses:b.n,audits:a.n,runs:r.n,drafts:o.n,qualified:qualified.n,recentRuns:latest.results});
   }
   if (path==="/api/businesses") {
-    const u=new URL(req.url), q=u.searchParams.get("q")||"", status=u.searchParams.get("status")||"";
+    const u=new URL(req.url), q=u.searchParams.get("q")||"", status=u.searchParams.get("status")||"",city=u.searchParams.get("city")||"",state=u.searchParams.get("state")||"",website=u.searchParams.get("website")||"",contact=u.searchParams.get("contact")||"",minScore=Number(u.searchParams.get("minScore")||0);
     let query="SELECT * FROM businesses WHERE 1=1", params=[];
     if(q){query+=" AND (name LIKE ? OR city LIKE ? OR state LIKE ? OR category LIKE ?)";params.push(...Array(4).fill("%"+q+"%"))}
     if(status){query+=" AND qualification_status=?";params.push(status)}
-    query+=" ORDER BY opportunity_score DESC, created_at DESC LIMIT 250";
+    if(city){query+=" AND city LIKE ?";params.push("%"+city+"%")}
+    if(state){query+=" AND state LIKE ?";params.push("%"+state+"%")}
+    if(website==="missing")query+=" AND (website_url IS NULL OR website_url='')";
+    if(website==="present")query+=" AND website_url IS NOT NULL AND website_url<>''";
+    if(contact==="email")query+=" AND email IS NOT NULL AND email<>''";
+    if(contact==="phone")query+=" AND phone IS NOT NULL AND phone<>''";
+    if(contact==="both")query+=" AND phone IS NOT NULL AND phone<>'' AND email IS NOT NULL AND email<>''";
+    if(minScore>0){query+=" AND opportunity_score>=?";params.push(Math.min(100,minScore))}
+    query+=" ORDER BY opportunity_score DESC, created_at DESC LIMIT 500";
     const rows=await env.DB.prepare(query).bind(...params).all();
     return json(rows.results);
   }
@@ -228,8 +236,15 @@ async function api(req, env, path) {
   if(path==="/api/audits"){const rows=await env.DB.prepare("SELECT a.*,b.name,b.website_url FROM website_audits a LEFT JOIN businesses b ON b.id=a.business_id ORDER BY a.checked_at DESC LIMIT 100").all();return json(rows.results)}
   if(path==="/api/outreach"){const rows=await env.DB.prepare("SELECT o.*,b.name FROM outreach_drafts o LEFT JOIN businesses b ON b.id=o.business_id ORDER BY o.created_at DESC LIMIT 100").all();return json(rows.results)}
   if(path==="/api/export.csv"){
-    const rows=await env.DB.prepare("SELECT name,category,city,state,phone,email,website_url,website_status,qualification_status,opportunity_score,source_url FROM businesses ORDER BY opportunity_score DESC").all();
-    const keys=["name","category","city","state","phone","email","website_url","website_status","qualification_status","opportunity_score","source_url"];
+    const u=new URL(req.url),city=u.searchParams.get("city")||"",state=u.searchParams.get("state")||"",status=u.searchParams.get("status")||"",minScore=Number(u.searchParams.get("minScore")||0);
+    let sql="SELECT name,category,city,state,phone,email,phone_verification,email_verification,website_url,website_status,activity_status,activity_score,qualification_status,qualification_reason,confidence_score,opportunity_score,source_url,discovery_source FROM businesses WHERE 1=1",p=[];
+    if(city){sql+=" AND city LIKE ?";p.push("%"+city+"%")}
+    if(state){sql+=" AND state LIKE ?";p.push("%"+state+"%")}
+    if(status){sql+=" AND qualification_status=?";p.push(status)}
+    if(minScore>0){sql+=" AND opportunity_score>=?";p.push(Math.min(100,minScore))}
+    sql+=" ORDER BY opportunity_score DESC";
+    const rows=await env.DB.prepare(sql).bind(...p).all();
+    const keys=["name","category","city","state","phone","email","phone_verification","email_verification","website_url","website_status","activity_status","activity_score","qualification_status","qualification_reason","confidence_score","opportunity_score","source_url","discovery_source"];
     const csv=[keys.join(","),...rows.results.map(r=>keys.map(k=>'"'+String(r[k]??"").replace(/"/g,'""')+'"').join(","))].join("\r\n");
     return new Response(csv,{headers:{"content-type":"text/csv; charset=utf-8","content-disposition":"attachment; filename=lead-hunter-businesses.csv"}});
   }
