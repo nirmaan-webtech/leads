@@ -5,7 +5,7 @@ const headers = {
   "referrer-policy": "strict-origin-when-cross-origin",
   "cache-control": "no-store"
 };
-const htmlHeaders = { "content-type": "text/html; charset=utf-8", "x-content-type-options":"nosniff", "x-frame-options":"DENY", "referrer-policy":"strict-origin-when-cross-origin" };
+const htmlHeaders = { "content-type": "text/html; charset=utf-8", "x-content-type-options":"nosniff", "x-frame-options":"DENY", "referrer-policy":"strict-origin-when-cross-origin", "content-security-policy":"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'", "cache-control":"no-store" };
 const enc = new TextEncoder();
 
 function json(data, status=200) { return new Response(JSON.stringify(data), {status, headers}); }
@@ -199,7 +199,7 @@ async function engRun(env){
     const confidence=Math.min(100,25+(biz.phone?15:0)+(extracted?15:0)+(biz.website_url?15:0)+(biz.address?10:0)+(emailStatus==="mx_found_mailbox_not_verified"?20:0)+(phoneStatus==="india_mobile_format_valid_not_called"?15:0));
     const opportunity=Math.min(100,(biz.website_url?15:55)+(a.status==="unreachable"||a.status==="http_error"?25:0)+(a.status==="needs_review"?20:0)+(a.status==="missing"?25:0)+(a.audit?Math.min(15,(a.audit.brokenLinks||[]).length*3):0));
     await env.DB.prepare("UPDATE businesses SET email=COALESCE(email,?),email_verification=?,phone_verification=?,activity_status=?,activity_score=?,qualification_status=?,qualification_reason=?,confidence_score=?,opportunity_score=?,website_status=?,last_verified_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(extracted,emailStatus,phoneStatus,activityStatus,activityScore,isQualified?"qualified":"screened_out",a.findings.join(" "),confidence,opportunity,a.status,new Date().toISOString(),biz.id).run();
-    if(a.audit){const x=a.audit;await env.DB.prepare("INSERT INTO website_audits(id,business_id,checked_at,requested_url,final_url,http_status,ssl_valid,mobile_test_status,desktop_test_status,broken_links_count,findings_json,evidence_json,links_checked,broken_links_json,forms_detected,contact_emails_json,mobile_heuristic_score,audit_score) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,biz.id,x.checked,x.requested,x.final,x.http,x.ssl,x.mobile,x.desktop,x.brokenLinks.length,JSON.stringify(a.findings),JSON.stringify(x.evidence),x.linksChecked,JSON.stringify(x.brokenLinks),x.forms,JSON.stringify(x.emails),mobileScore,x.auditScore).run();audited++;}
+    if(a.audit){const x=a.audit;await env.DB.prepare("INSERT INTO website_audits(id,business_id,checked_at,requested_url,final_url,http_status,ssl_valid,mobile_test_status,desktop_test_status,broken_links_count,findings_json,evidence_json,links_checked,broken_links_json,forms_detected,contact_emails_json,mobile_heuristic_score,audit_score) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,biz.id,x.checked,x.requested,x.final,x.http,x.ssl,x.mobile,x.desktop,x.brokenLinks.length,JSON.stringify(a.findings),JSON.stringify(x.evidence),x.linksChecked,JSON.stringify(x.brokenLinks),x.forms,JSON.stringify(x.emails),mobileScore,x.auditScore).run();audited++;}else{await env.DB.prepare("INSERT INTO website_audits(id,business_id,checked_at,requested_url,final_url,http_status,ssl_valid,mobile_test_status,desktop_test_status,broken_links_count,findings_json,evidence_json,links_checked,broken_links_json,forms_detected,contact_emails_json,mobile_heuristic_score,audit_score) VALUES(?,?,?,NULL,NULL,NULL,NULL,?,?,0,?,'{}',0,'[]',0,'[]',0,0)").bind(uuid(),biz.id,new Date().toISOString(),a.status,"not_applicable",JSON.stringify(a.findings)).run();audited++;}
     if(isQualified){qualified++;const refreshed=await env.DB.prepare("SELECT * FROM businesses WHERE id=?").bind(biz.id).first();const o=engOutreach(refreshed,a.findings);await env.DB.prepare("INSERT INTO outreach_drafts(id,business_id,channel,subject,message,strategy,status) VALUES(?,?,?,?,?,?,'draft')").bind(uuid(),biz.id,refreshed.email?"email":"manual_review",o.subject,o.message,o.strategy).run();drafts++;}
    }catch(e){failed++;}
   }
@@ -287,13 +287,17 @@ export default {
    }
    if(path==="/login" && req.method==="GET")return loginPage();
    if(path==="/login" && req.method==="POST"){
+     const ipHash=await sha(req.headers.get("CF-Connecting-IP")||"unknown");
+     const limit=await env.DB.prepare("SELECT attempts,locked_until,window_start FROM auth_rate_limits WHERE ip_hash=?").bind(ipHash).first();
+     if(limit&&limit.locked_until&&Date.parse(limit.locked_until+"Z")>Date.now())return html(loginPage("Too many attempts. Try again in 15 minutes."),429);
      const form=await req.formData(), username=String(form.get("username")||""), password=String(form.get("password")||"");
      const user=await env.DB.prepare("SELECT * FROM app_users WHERE username=?").bind(username).first();
-     if(!user)return loginPage("Invalid username or password.");
+     if(!user){await env.DB.prepare("INSERT INTO auth_rate_limits(ip_hash,attempts,window_start,locked_until) VALUES(?,1,CURRENT_TIMESTAMP,NULL) ON CONFLICT(ip_hash) DO UPDATE SET attempts=CASE WHEN window_start<datetime('now','-15 minutes') THEN 1 ELSE attempts+1 END,window_start=CASE WHEN window_start<datetime('now','-15 minutes') THEN CURRENT_TIMESTAMP ELSE window_start END,locked_until=CASE WHEN (CASE WHEN window_start<datetime('now','-15 minutes') THEN 1 ELSE attempts+1 END)>=8 THEN datetime('now','+15 minutes') ELSE locked_until END").bind(ipHash).run();return html(loginPage("Invalid username or password."),401);}
      const parts=user.password_hash.split("$"), salt=Uint8Array.from(parts[2].match(/../g),x=>parseInt(x,16));
      const key=await crypto.subtle.importKey("raw",enc.encode(password),"PBKDF2",false,["deriveBits"]);
      const bits=await crypto.subtle.deriveBits({name:"PBKDF2",salt,iterations:Number(parts[1]),hash:"SHA-256"},key,256);
-     if(hex(bits)!==parts[3])return loginPage("Invalid username or password.");
+     if(hex(bits)!==parts[3]){await env.DB.prepare("INSERT INTO auth_rate_limits(ip_hash,attempts,window_start,locked_until) VALUES(?,1,CURRENT_TIMESTAMP,NULL) ON CONFLICT(ip_hash) DO UPDATE SET attempts=CASE WHEN window_start<datetime('now','-15 minutes') THEN 1 ELSE attempts+1 END,window_start=CASE WHEN window_start<datetime('now','-15 minutes') THEN CURRENT_TIMESTAMP ELSE window_start END,locked_until=CASE WHEN (CASE WHEN window_start<datetime('now','-15 minutes') THEN 1 ELSE attempts+1 END)>=8 THEN datetime('now','+15 minutes') ELSE locked_until END").bind(ipHash).run();return html(loginPage("Invalid username or password."),401);}
+     await env.DB.prepare("DELETE FROM auth_rate_limits WHERE ip_hash=?").bind(ipHash).run();
      const token=Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,"0")).join("");
      const tokenHash=await sha(token);
      await env.DB.prepare("INSERT INTO app_sessions(token_hash,user_id,expires_at) VALUES(?,?,datetime('now','+12 hours'))").bind(tokenHash,user.id).run();
