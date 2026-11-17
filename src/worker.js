@@ -96,19 +96,25 @@ async function engDiscover(city){
  try{
   const b=city.bbox,lat=(b[0]+b[2])/2,lon=(b[1]+b[3])/2;
   const items=[],seen=new Set();
-  for(const term of ["shop","restaurant","clinic","office","school"]){
-   const u=new URL("https://photon.komoot.io/api/");
-   u.searchParams.set("q",term);u.searchParams.set("lat",String(lat));u.searchParams.set("lon",String(lon));u.searchParams.set("limit","30");u.searchParams.set("lang","en");
-   const p=await fetch(u,{headers:{"accept":"application/json"},signal:AbortSignal.timeout(6500)});
-   if(!p.ok)continue;
-   const d=await p.json();
-   for(const f of d.features||[]){
+  const osmFilters=["shop","office","craft","amenity:restaurant","amenity:cafe","amenity:clinic","amenity:doctors","amenity:dentist","amenity:school","amenity:college","amenity:bank","amenity:pharmacy","amenity:beauty_salon","amenity:car_repair","healthcare"];
+  const photonResults=await Promise.all(osmFilters.map(async tag=>{
+   try{
+    const u=new URL("https://photon.komoot.io/reverse");
+    u.searchParams.set("lon",String(lon));u.searchParams.set("lat",String(lat));u.searchParams.set("radius","12000");u.searchParams.set("limit","50");u.searchParams.set("lang","en");u.searchParams.set("osm_tag",tag);
+    const p=await fetch(u,{headers:{"accept":"application/json"},signal:AbortSignal.timeout(6500)});
+    if(!p.ok)return [];
+    const d=await p.json();return d.features||[];
+   }catch{return [];}
+  }));
+  for(const features of photonResults){
+   for(const f of features){
     const x=f.properties||{},id=x.osm_id,name=engClean(x.name),key=String(x.osm_type)+":"+String(id);
     if(!id||!name||seen.has(key))continue;seen.add(key);
-    items.push({type:x.osm_type==="R"?"relation":x.osm_type==="W"?"way":"node",id:Number(id),tags:{name,shop:x.osm_key==="shop"?x.osm_value:undefined,office:x.osm_key==="office"?x.osm_value:undefined,amenity:x.osm_key==="amenity"?x.osm_value:undefined,"addr:city":x.city||city.city,"addr:state":x.state||city.state,"addr:street":x.street,"addr:postcode":x.postcode,phone:x.phone,email:x.email,website:x.website,source_provider:"Photon"}});
+    const extra=x.extra||{};
+    items.push({type:x.osm_type==="R"?"relation":x.osm_type==="W"?"way":"node",id:Number(id),tags:{name,shop:x.osm_key==="shop"?x.osm_value:undefined,office:x.osm_key==="office"?x.osm_value:undefined,craft:x.osm_key==="craft"?x.osm_value:undefined,amenity:x.osm_key==="amenity"?x.osm_value:undefined,healthcare:x.osm_key==="healthcare"?x.osm_value:undefined,"addr:city":x.city||city.city,"addr:state":x.state||city.state,"addr:street":x.street,"addr:postcode":x.postcode,phone:x.phone||extra.phone,email:x.email||extra.email,website:x.website||extra.website,source_provider:"Photon"}});
    }
   }
-  if(items.length)return items;
+  if(items.length)return items.slice(0,50);
  }catch(e){failures.push("Photon "+String(e&&e.message||e).slice(0,80));}
  throw new Error("Discovery providers unavailable: "+failures.join(" | "));
 }
