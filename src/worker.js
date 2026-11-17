@@ -100,7 +100,7 @@ async function engDiscover(city){
   const photonResults=await Promise.all(osmFilters.map(async tag=>{
    try{
     const u=new URL("https://photon.komoot.io/reverse");
-    u.searchParams.set("lon",String(lon));u.searchParams.set("lat",String(lat));u.searchParams.set("radius","12000");u.searchParams.set("limit","50");u.searchParams.set("lang","en");u.searchParams.set("osm_tag",tag);
+    u.searchParams.set("lon",String(lon));u.searchParams.set("lat",String(lat));u.searchParams.set("radius","12000");u.searchParams.set("limit","10");u.searchParams.set("lang","en");u.searchParams.set("osm_tag",tag);
     const p=await fetch(u,{headers:{"accept":"application/json"},signal:AbortSignal.timeout(6500)});
     if(!p.ok)return [];
     const d=await p.json();return d.features||[];
