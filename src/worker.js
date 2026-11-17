@@ -77,9 +77,23 @@ function engQuery(city){
  return '[out:json][timeout:22];(nwr["name"]["shop"]('+b.join(",")+');nwr["name"]["office"]('+b.join(",")+');nwr["name"]["craft"]('+b.join(",")+');nwr["name"]["amenity"~"restaurant|cafe|clinic|dentist|doctors|hospital|school|college|bank|pharmacy|beauty_salon|fast_food|car_repair|fuel"]('+b.join(",")+');nwr["name"]["healthcare"]('+b.join(",")+'););out center tags meta 70;';
 }
 async function engDiscover(city){
- const r=await fetch("https://overpass-api.de/api/interpreter",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded;charset=UTF-8","accept":"application/json"},body:"data="+encodeURIComponent(engQuery(city)),signal:AbortSignal.timeout(28000)});
- if(!r.ok)throw new Error("OpenStreetMap Overpass HTTP "+r.status);
- const d=await r.json();return Array.isArray(d.elements)?d.elements:[];
+ const query="data="+encodeURIComponent(engQuery(city));
+ const endpoints=[
+  "https://overpass.private.coffee/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  "https://overpass-api.de/api/interpreter"
+ ];
+ const failures=[];
+ for(const endpoint of endpoints){
+  try{
+   const r=await fetch(endpoint,{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded;charset=UTF-8","accept":"application/json","user-agent":"NirmaanLeadHunter/1.0 (business discovery; contact via GitHub repository)"},body:query,signal:AbortSignal.timeout(8500)});
+   if(!r.ok){failures.push(new URL(endpoint).hostname+" HTTP "+r.status);continue;}
+   const d=await r.json();
+   if(!d||!Array.isArray(d.elements))throw new Error("Invalid Overpass JSON response");
+   return d.elements;
+  }catch(e){failures.push(new URL(endpoint).hostname+" "+String(e&&e.message||e).slice(0,100));}
+ }
+ throw new Error("All Overpass endpoints failed: "+failures.join(" | "));
 }
 function engRecord(el,city){
  const t=el.tags||{},name=engClean(t.name);if(!name)return null;
