@@ -89,7 +89,7 @@ export default {
      if(!/^[a-zA-Z0-9_.-]{3,40}$/.test(username)||password.length<14)return html("Invalid username or password. Password must be at least 14 characters.",400);
      const salt=crypto.getRandomValues(new Uint8Array(16)), key=await crypto.subtle.importKey("raw",enc.encode(password),"PBKDF2",false,["deriveBits"]);
      const bits=await crypto.subtle.deriveBits({name:"PBKDF2",salt,iterations:100000,hash:"SHA-256"},key,256);
-     const passHash="pbkdf2$310000$"+hex(salt)+"$"+hex(bits);
+     const passHash="pbkdf2$100000$"+hex(salt)+"$"+hex(bits);
      await env.DB.prepare("INSERT INTO app_users(username,password_hash) VALUES(?,?)").bind(username,passHash).run();
      return Response.redirect(new URL("/login",req.url),303);
    }
