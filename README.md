@@ -23,3 +23,7 @@ India-wide business prospecting dashboard on Cloudflare Workers + D1.
 ## Deploy
 Worker: `nirmaan-ai-lead-hunter`
 D1 binding: `DB` -> `nirmaan-ai-lead-hunter`
+
+
+## Verification and audit roadmap
+The live D1 schema now includes fields for phone/email verification state, activity evidence, qualification reasons, link checks, form detection, mobile heuristics, and audit scores. These fields are not claims of completed checks until the worker writes evidence into them.
