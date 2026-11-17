@@ -105,7 +105,7 @@ async function engDiscover(city){
    for(const f of d.features||[]){
     const x=f.properties||{},id=x.osm_id,name=engClean(x.name),key=String(x.osm_type)+":"+String(id);
     if(!id||!name||seen.has(key))continue;seen.add(key);
-    items.push({type:x.osm_type==="R"?"relation":x.osm_type==="W"?"way":"node",id:Number(id),tags:{name,shop:x.osm_key==="shop"?x.osm_value:undefined,office:x.osm_key==="office"?x.osm_value:undefined,amenity:x.osm_key==="amenity"?x.osm_value:undefined,"addr:city":x.city||city.city,"addr:state":x.state||city.state,"addr:street":x.street,"addr:postcode":x.postcode,phone:x.phone,email:x.email,website:x.website}});
+    items.push({type:x.osm_type==="R"?"relation":x.osm_type==="W"?"way":"node",id:Number(id),tags:{name,shop:x.osm_key==="shop"?x.osm_value:undefined,office:x.osm_key==="office"?x.osm_value:undefined,amenity:x.osm_key==="amenity"?x.osm_value:undefined,"addr:city":x.city||city.city,"addr:state":x.state||city.state,"addr:street":x.street,"addr:postcode":x.postcode,phone:x.phone,email:x.email,website:x.website,source_provider:"Photon"}});
    }
   }
   if(items.length)return items;
@@ -119,7 +119,7 @@ function engRecord(el,city){
  const instagram=engTag(t,["contact:instagram","instagram"]),facebook=engTag(t,["contact:facebook","facebook"]);
  const address=[t["addr:housenumber"],t["addr:street"],t["addr:suburb"],t["addr:postcode"]].filter(Boolean).join(", ");
  const domain=website?new URL(website).hostname.replace(/^www\./,"").toLowerCase():null;
- const ev={source:"OpenStreetMap",osm_type:el.type,osm_id:el.id,osm_version:el.version||null,osm_timestamp:el.timestamp||null,observed_at:new Date().toISOString(),activity_signal:"A public map listing exists; this does not independently prove current trading or revenue."};
+ const ev={source:t.source_provider||"OpenStreetMap",osm_type:el.type,osm_id:el.id,osm_version:el.version||null,osm_timestamp:el.timestamp||null,observed_at:new Date().toISOString(),activity_signal:"A public map listing exists; this does not independently prove current trading or revenue."};
  return {id:uuid(),dedupe:engDedupe(el),name,category:engCategory(t),city:engClean(t["addr:city"])||city.city,state:engClean(t["addr:state"])||city.state,address,phone,email,website,domain,instagram,facebook,source:engSource(el),evidence:ev};
 }
 async function engAudit(biz){
@@ -174,7 +174,7 @@ async function engRun(env){
    const confidence=50+(b.phone?15:0)+(b.email?15:0)+(b.website?10:0)+(b.address?10:0);
    const score=b.website?35:65;
    const ins=await env.DB.prepare("INSERT OR IGNORE INTO businesses(id,dedupe_key,name,category,city,state,country,address,phone,email,website_url,domain,instagram_url,facebook_url,discovery_source,activity_evidence,website_status,qualification_status,confidence_score,opportunity_score,first_seen_at,last_verified_at,raw_evidence_json,source_url) VALUES(?,?,?,?,?,?,'India',?,?,?,?,?,?,?,?,?,'unverified','pending',?,?,?,?,?,?)")
-    .bind(b.id,b.dedupe,b.name,b.category,b.city,b.state,b.address||null,b.phone||null,b.email||null,b.website,b.domain,b.instagram||null,b.facebook||null,"OpenStreetMap",b.evidence.activity_signal,confidence,score,started,started,JSON.stringify(b.evidence),b.source).run();
+    .bind(b.id,b.dedupe,b.name,b.category,b.city,b.state,b.address||null,b.phone||null,b.email||null,b.website,b.domain,b.instagram||null,b.facebook||null,b.evidence.source,b.evidence.activity_signal,confidence,score,started,started,JSON.stringify(b.evidence),b.source).run();
    if(ins.meta&&ins.meta.changes)discovered++;else duplicates++;
   }
   const candidates=await env.DB.prepare("SELECT * FROM businesses WHERE city=? AND state=? AND website_status='unverified' ORDER BY opportunity_score DESC LIMIT 10").bind(city.city,city.state).all();
