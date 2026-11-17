@@ -73,3 +73,5 @@ These changes still require a successful live run and production smoke test. The
 - Per-run website checks are capped at 20 businesses; same-origin link checks are capped at 5 and do not follow redirects.
 - Qualification activity scoring now includes a named, categorized public business listing as a weak signal. Activity remains explicitly unverified and must not be represented as proof of active trading.
 - Existing obvious non-commercial records in production were marked `excluded_non_target` / `screened_out`; no records were deleted.
+
+- Photon reverse fallback now requests a smaller per-category sample (10 per tag) before applying the 50-new-record run cap, reducing domination by the first broad category.
