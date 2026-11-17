@@ -141,7 +141,8 @@ fetch("${endpoint}").then(r=>r.json()).then(rows=>{const tb=document.querySelect
    if(path==="/runs")return await tablePage("Research runs","Runs","/api/runs",[["started_at","Started"],["completed_at","Completed"],["status","Status"],["target_count","Target"],["discovered_count","Found"],["qualified_count","Qualified"],["duplicate_count","Duplicates"],["failed_count","Failed"],["notes","Notes"]]);
    return json({error:"Not found"},404);
   } catch(e){
-    return json({error:"Internal server error"},500);
+    const diagnostic = ["/setup","/login","/health"].includes(path) ? String(e?.stack || e) : undefined;
+    return json({error:"Internal server error",detail:diagnostic},500);
   }
  },
  async scheduled(event,env,ctx){
