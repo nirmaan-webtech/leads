@@ -60,3 +60,8 @@ These changes still require a successful live run and production smoke test. The
 - DNS rebinding and destination-IP validation are not fully solved by hostname checks alone; do not treat this as a hardened arbitrary-URL scanning service.
 - The current OSM/Photon discovery source remains dependent on public infrastructure and can fail or return sparse results. A successful production discovery run is still required to validate actual coverage.
 - Security hardening has compile/deployment validation; end-to-end authentication, rate-limit behavior, and discovery provider behavior still need live production verification.
+
+
+## Database compatibility fix
+- Migration `0004_business_country.sql` adds `businesses.country` with default `India`. This aligns the production D1 schema with the discovery INSERT in `src/worker.js`.
+- Production D1 schema was patched and the exact business INSERT statement was validated using a temporary QA row, which was deleted immediately after the test.
