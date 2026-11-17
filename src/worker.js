@@ -120,6 +120,8 @@ async function engDiscover(city){
 }
 function engRecord(el,city){
  const t=el.tags||{},name=engClean(t.name);if(!name)return null;
+ const office=String(t.office||"").toLowerCase(),amenity=String(t.amenity||"").toLowerCase();
+ if(["government","diplomatic","newspaper","political_party","association"].includes(office)||["school","college","university","government"].includes(amenity))return null;
  const website=engUrl(engTag(t,["contact:website","website","url"]));
  const phone=engTag(t,["contact:phone","phone","mobile"]),email=engTag(t,["contact:email","email"]);
  const instagram=engTag(t,["contact:instagram","instagram"]),facebook=engTag(t,["contact:facebook","facebook"]);
@@ -140,12 +142,12 @@ async function engAudit(biz){
  const forms=(htmlText.match(/<form\b/gi)||[]).length;
  const mediaQueries=(htmlText.match(/@media[^{}]*\([^)]*(?:width|device-width)[^)]*\)/gi)||[]).length;
  const emails=[...new Set((htmlText.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)||[]).map(x=>x.toLowerCase()))].slice(0,10);
- const links=[...new Set([...htmlText.matchAll(/<a\b[^>]*href\s*=\s*["']([^"'#]+)["']/gi)].map(m=>m[1]).filter(h=>!/^mailto:|^tel:|^javascript:/i.test(h)).map(h=>{try{return new URL(h,url).toString()}catch{return null}}).filter(Boolean))].filter(h=>{try{return new URL(h).origin===new URL(url).origin}catch{return false}}).slice(0,10);
+ const links=[...new Set([...htmlText.matchAll(/<a\b[^>]*href\s*=\s*["']([^"'#]+)["']/gi)].map(m=>m[1]).filter(h=>!/^mailto:|^tel:|^javascript:/i.test(h)).map(h=>{try{return new URL(h,url).toString()}catch{return null}}).filter(Boolean))].filter(h=>{try{return new URL(h).origin===new URL(url).origin}catch{return false}}).slice(0,5);
  const broken=[];let linksChecked=0;
- for(const link of links){try{const lr=await fetch(link,{method:"HEAD",redirect:"follow",signal:AbortSignal.timeout(3000)});linksChecked++;if(lr.status>=400)broken.push({url:link,status:lr.status});}catch(e){linksChecked++;broken.push({url:link,status:"request_failed"});}}
+ for(const link of links){try{const lr=await fetch(link,{method:"HEAD",redirect:"manual",signal:AbortSignal.timeout(2500)});linksChecked++;if(lr.status>=300&&lr.status<400)broken.push({url:link,status:"redirect_requires_review"});else if(lr.status>=400)broken.push({url:link,status:lr.status});}catch(e){linksChecked++;broken.push({url:link,status:"request_failed"});}}
  const findings=[];if(error)findings.push(error);if(res&&res.status>=400)findings.push("Homepage returned HTTP "+res.status+".");if(!finalUrl.startsWith("https://"))findings.push("Final website URL does not use HTTPS.");if(!cleanTitle)findings.push("HTML title tag missing.");if(!viewport)findings.push("Responsive viewport meta tag missing.");if(!description)findings.push("Meta description missing.");if(!h1)findings.push("No H1 heading detected.");if(!mediaQueries)findings.push("No responsive CSS media query detected in homepage HTML.");if(broken.length)findings.push(broken.length+" same-origin links failed or could not be checked.");if(htmlText.length<1200&&res&&res.ok)findings.push("Very small HTML response; content may be incomplete or client-rendered.");
  const status=!res||error?(String(error).includes("redirected")?"redirect_requires_manual_review":"unreachable"):res.status>=400?"http_error":findings.length?"needs_review":"reachable_basic_checks_passed";
- return {status,findings,audit:{id:uuid(),checked,requested:url,final:finalUrl,http:res?res.status:null,ssl:finalUrl.startsWith("https://")?1:0,mobile:viewport?"viewport_meta_present":"viewport_meta_missing",desktop:res?"http_response_received":"not_reached",title:cleanTitle,linksChecked,brokenLinks:broken,forms,emails,mobileScore:Math.max(0,100-(viewport?0:35)-(mediaQueries?0:20)),auditScore:Math.max(0,100-(res&&res.status<400?0:35)-(url.startsWith("https://")?0:15)-(cleanTitle?0:10)-(viewport?0:15)-(description?0:5)-(h1?0:5)-Math.min(broken.length*3,15)),evidence:{elapsed_ms:elapsed,content_type:res?res.headers.get("content-type"):null,html_bytes:htmlText.length,has_viewport:viewport,has_meta_description:description,h1_count:h1,media_query_count:mediaQueries,forms_detected:forms,limitations:["Mobile score is a markup heuristic, not a real mobile browser test.","Forms are detected, never submitted.","Only up to 10 same-origin links are checked with HEAD.","No Lighthouse/PageSpeed or visual rendering."]}}};
+ return {status,findings,audit:{id:uuid(),checked,requested:url,final:finalUrl,http:res?res.status:null,ssl:finalUrl.startsWith("https://")?1:0,mobile:viewport?"viewport_meta_present":"viewport_meta_missing",desktop:res?"http_response_received":"not_reached",title:cleanTitle,linksChecked,brokenLinks:broken,forms,emails,mobileScore:Math.max(0,100-(viewport?0:35)-(mediaQueries?0:20)),auditScore:Math.max(0,100-(res&&res.status<400?0:35)-(url.startsWith("https://")?0:15)-(cleanTitle?0:10)-(viewport?0:15)-(description?0:5)-(h1?0:5)-Math.min(broken.length*3,15)),evidence:{elapsed_ms:elapsed,content_type:res?res.headers.get("content-type"):null,html_bytes:htmlText.length,has_viewport:viewport,has_meta_description:description,h1_count:h1,media_query_count:mediaQueries,forms_detected:forms,limitations:["Mobile score is a markup heuristic, not a real mobile browser test.","Forms are detected, never submitted.","Only up to 5 same-origin links are checked with HEAD.","No Lighthouse/PageSpeed or visual rendering."]}}};
 }
 async function engEmailCheck(email){
  const value=String(email||"").trim().toLowerCase();
@@ -184,14 +186,14 @@ async function engRun(env){
     .bind(b.id,b.dedupe,b.name,b.category,b.city,b.state,b.address||null,b.phone||null,b.email||null,b.website,b.domain,b.instagram||null,b.facebook||null,b.evidence.source,b.evidence.activity_signal,confidence,score,started,started,JSON.stringify(b.evidence),b.source).run();
    if(ins.meta&&ins.meta.changes)discovered++;else duplicates++;
   }
-  const candidates=await env.DB.prepare("SELECT * FROM businesses WHERE city=? AND state=? AND website_status='unverified' ORDER BY opportunity_score DESC LIMIT 10").bind(city.city,city.state).all();
+  const candidates=await env.DB.prepare("SELECT * FROM businesses WHERE website_status='unverified' ORDER BY created_at ASC LIMIT 20").all();
   for(const biz of candidates.results){
    try{
     const a=await engAudit(biz),isLead=["missing","unreachable","http_error","needs_review","redirect_requires_manual_review"].includes(a.status);
     const extracted=(a.audit&&a.audit.emails||[]).find(e=>!biz.email)||biz.email||null;
     const emailStatus=extracted?await engEmailCheck(extracted):"not_provided",phoneStatus=engPhoneCheck(biz.phone);
     const mobileScore=a.audit?a.audit.mobileScore:0;
-    const activityScore=Math.min(100,(biz.phone?15:0)+(biz.email?10:0)+(biz.website_url?20:0)+(a.status==="reachable_basic_checks_passed"?30:0)+(a.status==="needs_review"?15:0)+(biz.address?10:0));
+    const activityScore=Math.min(100,(biz.phone?15:0)+(biz.email?10:0)+(biz.website_url?20:0)+(a.status==="reachable_basic_checks_passed"?30:0)+(a.status==="needs_review"?15:0)+(biz.address?10:0)+(biz.name&&biz.category!=="Local business"?10:0));
     const activityStatus=activityScore>=55?"signals_present_unverified":"insufficient_public_signals";
     const hasContact=Boolean(biz.phone||biz.email||extracted);
     const hasAddress=Boolean(biz.address);
