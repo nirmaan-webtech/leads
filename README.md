@@ -45,3 +45,18 @@ Do not scrape Google Maps, Instagram or Facebook. Only use permitted public APIs
 - A lead is not marked qualified and given an outreach draft unless the website opportunity condition and minimum public contact/address evidence are both present.
 
 These changes still require a successful live run and production smoke test. The public Photon service is rate-limited and provides no availability guarantee. The OSM-based providers share the same underlying ecosystem, not independent business databases.
+
+
+## Security hardening (2026-11)
+- Login attempts are throttled per hashed client IP: eight failures in a 15-minute window trigger a 15-minute lockout. Successful login clears that IP's counter.
+- Dashboard state-changing endpoints require a same-origin request; logout is POST-only.
+- Website audit does not follow redirects. Redirecting domains are flagged for manual review to avoid fetching an unvalidated redirect destination.
+- Homepage response bodies are capped at 250 KB during parsing.
+- CSV cells beginning with spreadsheet formula characters are escaped to reduce CSV formula injection risk.
+- HTML responses send a restrictive Content Security Policy and no-store cache policy.
+- Website audits now retain a result row for businesses whose listing has no website, rather than silently omitting those checks.
+
+## Remaining external limitations
+- DNS rebinding and destination-IP validation are not fully solved by hostname checks alone; do not treat this as a hardened arbitrary-URL scanning service.
+- The current OSM/Photon discovery source remains dependent on public infrastructure and can fail or return sparse results. A successful production discovery run is still required to validate actual coverage.
+- Security hardening has compile/deployment validation; end-to-end authentication, rate-limit behavior, and discovery provider behavior still need live production verification.
