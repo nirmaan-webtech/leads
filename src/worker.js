@@ -93,7 +93,22 @@ async function engDiscover(city){
    return d.elements;
   }catch(e){failures.push(new URL(endpoint).hostname+" "+String(e&&e.message||e).slice(0,100));}
  }
- throw new Error("All Overpass endpoints failed: "+failures.join(" | "));
+ try{
+  const b=city.bbox,lat=(b[0]+b[2])/2,lon=(b[1]+b[3])/2;
+  const u=new URL("https://photon.komoot.io/api/");
+  u.searchParams.set("q","business");u.searchParams.set("lat",String(lat));u.searchParams.set("lon",String(lon));u.searchParams.set("limit","50");u.searchParams.set("lang","en");
+  const p=await fetch(u,{headers:{"accept":"application/json"},signal:AbortSignal.timeout(7000)});
+  if(p.ok){
+   const d=await p.json(),items=[];
+   for(const f of d.features||[]){
+    const x=f.properties||{},id=x.osm_id,name=engClean(x.name);
+    if(!id||!name)continue;
+    items.push({type:x.osm_type==="R"?"relation":x.osm_type==="W"?"way":"node",id:Number(id),tags:{name,shop:x.osm_key==="shop"?x.osm_value:undefined,office:x.osm_key==="office"?x.osm_value:undefined,amenity:x.osm_key==="amenity"?x.osm_value:undefined,"addr:city":x.city||city.city,"addr:state":x.state||city.state,"addr:street":x.street,"addr:postcode":x.postcode,phone:x.phone,email:x.email,website:x.website}});
+   }
+   if(items.length)return items;
+  }
+ }catch(e){failures.push("Photon "+String(e&&e.message||e).slice(0,80));}
+ throw new Error("Discovery providers unavailable: "+failures.join(" | "));
 }
 function engRecord(el,city){
  const t=el.tags||{},name=engClean(t.name);if(!name)return null;
