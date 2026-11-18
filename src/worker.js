@@ -390,9 +390,9 @@ export default {
      return html(shell(title,`<div class="panel"><div class="row"><div><h2>${title}</h2><div class="hint">Filter records and use row-level actions. Maximum 100 records per view.</div></div>${exportLink}</div>
        <form id="filters" class="filters">${controls}<div class="filterActions"><button class="btn" type="submit">Apply filters</button><button class="btn secondary" type="reset">Clear</button></div></form>
        <div class="hint" id="resultCount" style="margin:10px 0">Loading records…</div>
-       <div class="tablewrap"><table id="data"><thead><tr>${cols.map(x=>'<th>'+x[1]+'</th>').join("")}<th>Actions</th></tr></thead><tbody><tr><td colspan="${cols.length+1}" class="empty">Loading…</td></tr></tbody></table></div></div>
+       <div class="tablewrap"><table id="data"><thead><tr><th class="actionHead">Actions</th>${cols.map(x=>'<th>'+x[1]+'</th>').join("")}</tr></thead><tbody><tr><td colspan="${cols.length+1}" class="empty">Loading…</td></tr></tbody></table></div></div>
        <dialog id="recordDialog" style="max-width:680px;width:90%;background:#111827;color:#edf2fb;border:1px solid #314059;border-radius:12px;padding:22px"><button class="btn secondary" id="closeDialog" style="float:right">Close</button><h2>Record details</h2><pre id="recordDetails" style="white-space:pre-wrap;overflow-wrap:anywhere;color:#d8e2f2"></pre></dialog>
-       <style>.filters{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin-top:18px}.filterField{font-size:12px;color:#96a3b8;margin:0}.filterField input,.filterField select{margin-top:6px}.filterActions{display:flex;gap:8px;align-items:end}.actionBtn{padding:7px 9px;margin:2px;border:1px solid #314059;border-radius:7px;background:#1b2b43;color:#edf2fb;cursor:pointer;font-size:12px}.actionBtn:hover{border-color:#d7b56d}.actions{min-width:160px}.filters input,.filters select{min-width:0}@media(max-width:900px){.filters{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:520px){.filters{grid-template-columns:1fr}.filterActions{align-items:center}}</style>
+       <style>.filters{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin-top:18px}.filterField{font-size:12px;color:#96a3b8;margin:0}.filterField input,.filterField select{margin-top:6px}.filterActions{display:flex;gap:8px;align-items:end}.actionBtn{padding:7px 9px;margin:2px;border:1px solid #314059;border-radius:7px;background:#1b2b43;color:#edf2fb;cursor:pointer;font-size:12px}.actionBtn:hover{border-color:#d7b56d}.actions{min-width:160px}.actionSticky{position:sticky;left:0;z-index:2;background:#101827;box-shadow:5px 0 8px rgba(0,0,0,.22)}.actionHead{position:sticky;left:0;z-index:3;background:#18243a}.filters input,.filters select{min-width:0}@media(max-width:900px){.filters{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:520px){.filters{grid-template-columns:1fr}.filterActions{align-items:center}}</style>
        <script>
        (function(){
         const form=document.getElementById("filters"),body=document.querySelector("#data tbody"),count=document.getElementById("resultCount"),dialog=document.getElementById("recordDialog"),details=document.getElementById("recordDetails");
@@ -432,8 +432,9 @@ export default {
          count.textContent=rows.length+" record(s) shown";
          if(!rows.length){body.innerHTML='<tr><td colspan="'+(fields.length+1)+'" class="empty">No matching records</td></tr>';return}
          for(let i=0;i<rows.length;i++){const r=rows[i],tr=document.createElement("tr");
+          const actionCell=document.createElement("td");actionCell.className="actions actionSticky";actionCell.innerHTML=actions(r);actionCell.querySelectorAll("button").forEach(b=>b.dataset.index=i);tr.appendChild(actionCell);
           for(const k of fields){const td=document.createElement("td");let val=r[k];if(k==="website_url"||k==="requested_url"){td.textContent=val||"—";}else if(k.endsWith("_json")&&val){try{td.textContent=JSON.stringify(JSON.parse(val));}catch{td.textContent=val}}else td.textContent=val??"—";tr.appendChild(td)}
-          const td=document.createElement("td");td.className="actions";td.innerHTML=actions(r);td.querySelectorAll("button").forEach(b=>b.dataset.index=i);tr.appendChild(td);body.appendChild(tr);
+          body.appendChild(tr);
          }
         }
         async function load(){
