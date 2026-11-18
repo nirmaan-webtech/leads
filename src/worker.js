@@ -230,11 +230,21 @@ async function api(req, env, path) {
     const latest=await env.DB.prepare("SELECT * FROM research_runs ORDER BY started_at DESC LIMIT 5").all();
     return json({businesses:b.n,audits:a.n,runs:r.n,drafts:o.n,qualified:qualified.n,recentRuns:latest.results});
   }
+  if(path==="/api/filter-options"){
+    const [countries,cities,states,categories]=await Promise.all([
+      env.DB.prepare("SELECT DISTINCT country value FROM businesses WHERE country IS NOT NULL AND country<>'' ORDER BY country").all(),
+      env.DB.prepare("SELECT DISTINCT city value,country,state FROM businesses WHERE city IS NOT NULL AND city<>'' ORDER BY city").all(),
+      env.DB.prepare("SELECT DISTINCT state value,country FROM businesses WHERE state IS NOT NULL AND state<>'' ORDER BY state").all(),
+      env.DB.prepare("SELECT DISTINCT category value,country FROM businesses WHERE category IS NOT NULL AND category<>'' ORDER BY category").all()
+    ]);
+    return json({countries:countries.results,cities:cities.results,states:states.results,categories:categories.results});
+  }
   if (path==="/api/businesses") {
-    const u=new URL(req.url), q=u.searchParams.get("q")||"", status=u.searchParams.get("status")||"",city=u.searchParams.get("city")||"",state=u.searchParams.get("state")||"",website=u.searchParams.get("website")||"",contact=u.searchParams.get("contact")||"",minScore=Number(u.searchParams.get("minScore")||0);
+    const u=new URL(req.url), q=u.searchParams.get("q")||"", status=u.searchParams.get("status")||"",country=u.searchParams.get("country")||"",city=u.searchParams.get("city")||"",state=u.searchParams.get("state")||"",website=u.searchParams.get("website")||"",contact=u.searchParams.get("contact")||"",minScore=Number(u.searchParams.get("minScore")||0);
     let query="SELECT * FROM businesses WHERE 1=1", params=[];
     if(q){query+=" AND (name LIKE ? OR city LIKE ? OR state LIKE ? OR category LIKE ?)";params.push(...Array(4).fill("%"+q+"%"))}
     if(status){query+=" AND qualification_status=?";params.push(status)}
+    if(country){query+=" AND country=?";params.push(country)}
     if(city){query+=" AND city LIKE ?";params.push("%"+city+"%")}
     if(state){query+=" AND state LIKE ?";params.push("%"+state+"%")}
     if(website==="missing")query+=" AND (website_url IS NULL OR website_url='')";
@@ -363,7 +373,7 @@ export default {
    }
    const tablePage=async(title,active,endpoint,cols)=>{
      const filterFields=active==="Businesses"?[
-       ["q","Search name / city / category","text"],["city","City","text"],["state","State","text"],["category","Category","text"],
+       ["q","Search name / city / category","text"],["country","Country","select"],["city","City","select"],["state","State","select"],["category","Category","select"],
        ["status","Qualification","select","",["pending","qualified","screened_out"]],
        ["websiteStatus","Website status","select","",["missing","unverified","reachable","unreachable","http_error","excluded_non_target"]],
        ["website","Website URL","select","",["missing","present"]],
@@ -375,7 +385,7 @@ export default {
      ]:[
        ["q","Search business / subject / message","text"],["status","Draft status","select","",["draft","approved","sent","archived"]],["channel","Channel","select","",["email","manual_review","whatsapp"]]
      ];
-     const controls=filterFields.map(([name,label,type,,opts])=>type==="select"?'<label class="filterField">'+label+'<select name="'+name+'"><option value="">All</option>'+opts.map(v=>'<option value="'+v+'">'+v.replaceAll("_"," ")+'</option>').join("")+'</select></label>':'<label class="filterField">'+label+'<input name="'+name+'" type="'+type+'" '+(type==="number"?'min="0" max="100"':'')+' placeholder="'+label+'"></label>').join("");
+     const controls=filterFields.map(([name,label,type,,opts])=>type==="select"?'<label class="filterField">'+label+'<select name="'+name+'"><option value="">All</option>'+(opts||[]).map(v=>'<option value="'+v+'">'+v.replaceAll("_"," ")+'</option>').join("")+'</select></label>':'<label class="filterField">'+label+'<input name="'+name+'" type="'+type+'" '+(type==="number"?'min="0" max="100"':'')+' placeholder="'+label+'"></label>').join("");
      const exportLink=active==="Businesses"?'<a class="btn secondary" id="exportRows" href="/api/export.csv">Export filtered CSV</a>':'';
      return html(shell(title,`<div class="panel"><div class="row"><div><h2>${title}</h2><div class="hint">Filter records and use row-level actions. Maximum 100 records per view.</div></div>${exportLink}</div>
        <form id="filters" class="filters">${controls}<div class="filterActions"><button class="btn" type="submit">Apply filters</button><button class="btn secondary" type="reset">Clear</button></div></form>
@@ -387,6 +397,28 @@ export default {
        (function(){
         const form=document.getElementById("filters"),body=document.querySelector("#data tbody"),count=document.getElementById("resultCount"),dialog=document.getElementById("recordDialog"),details=document.getElementById("recordDetails");
         const fields=${JSON.stringify(cols.map(x=>x[0]))},kind=${JSON.stringify(active)},endpoint=${JSON.stringify(endpoint)};
+        const optionData="/api/filter-options";
+        async function populateBusinessOptions(){
+         if(kind!=="Businesses")return;
+         const data=await fetch(optionData).then(r=>r.json());
+         const controls={country:form.elements.country,city:form.elements.city,state:form.elements.state,category:form.elements.category};
+         function fill(name,items,selected=""){
+          const el=controls[name],previous=selected||el.value;el.innerHTML='<option value="">All</option>';
+          for(const item of items){if(!item.value)continue;const opt=document.createElement("option");opt.value=item.value;opt.textContent=item.value;el.appendChild(opt)}
+          if([...el.options].some(o=>o.value===previous))el.value=previous;
+         }
+         function update(){
+          const country=controls.country.value,state=controls.state.value;
+          fill("city",data.cities.filter(x=>(!country||x.country===country)&&(!state||x.state===state)),controls.city.value);
+          fill("state",data.states.filter(x=>!country||x.country===country),controls.state.value);
+          fill("category",data.categories.filter(x=>!country||x.country===country),controls.category.value);
+         }
+         fill("country",data.countries);fill("city",data.cities);fill("state",data.states);fill("category",data.categories);
+         controls.country.addEventListener("change",()=>{controls.city.value="";controls.state.value="";controls.category.value="";update()});
+         controls.state.addEventListener("change",()=>{controls.city.value="";update()});
+         update();
+        }
+
         let records=[];
         function esc(v){return String(v??"—")}
         function button(action,label){return '<button type="button" class="actionBtn" data-action="'+action+'">'+label+'</button>'}
@@ -411,7 +443,7 @@ export default {
           const exportButton=document.getElementById("exportRows");if(exportButton){const exportParams=new URLSearchParams(params);exportButton.href="/api/export.csv?"+exportParams.toString()}
          }catch(e){count.textContent="Could not load records: "+e.message}
         }
-        form.addEventListener("submit",e=>{e.preventDefault();load()});form.addEventListener("reset",()=>setTimeout(load,0));
+        form.addEventListener("submit",e=>{e.preventDefault();load()});form.addEventListener("reset",()=>setTimeout(()=>{populateBusinessOptions().then(load)},0));
         document.getElementById("closeDialog").addEventListener("click",()=>dialog.close());
         body.addEventListener("click",async e=>{
          const b=e.target.closest("button[data-action]");if(!b)return;const r=records[Number(b.dataset.index)];if(!r)return;
@@ -420,7 +452,7 @@ export default {
          if(action==="phone"||action==="email"||action==="copy"){const value=action==="phone"?r.phone:action==="email"?r.email:[r.subject||"",r.message||""].filter(Boolean).join("\n\n");try{await navigator.clipboard.writeText(value);b.textContent="Copied";}catch{details.textContent=value;dialog.showModal()}return}
          if(action==="website"){const target=r.website_url||r.requested_url;if(target){const u=new URL(target,location.origin);if(["http:","https:"].includes(u.protocol))window.open(u.href,"_blank","noopener,noreferrer")}return}
         });
-        load();
+        populateBusinessOptions().then(load).catch(()=>load());
        })();
        </script>`,active));
    };
