@@ -398,9 +398,17 @@ export default {
         const form=document.getElementById("filters"),body=document.querySelector("#data tbody"),count=document.getElementById("resultCount"),dialog=document.getElementById("recordDialog"),details=document.getElementById("recordDetails");
         const fields=${JSON.stringify(cols.map(x=>x[0]))},kind=${JSON.stringify(active)},endpoint=${JSON.stringify(endpoint)};
         const optionData="/api/filter-options";
+        async function apiJson(url,options={}){
+         const res=await fetch(url,{credentials:"same-origin",headers:{accept:"application/json",...(options.headers||{})},...options});
+         const type=res.headers.get("content-type")||"";
+         if(res.redirected||!type.includes("application/json"))throw new Error("API returned a sign-in page or non-JSON response. Sign in again, then reload.");
+         const data=await res.json();
+         if(!res.ok)throw new Error(data.detail||data.error||("HTTP "+res.status));
+         return data;
+        }
         async function populateBusinessOptions(){
          if(kind!=="Businesses")return;
-         const data=await fetch(optionData).then(r=>r.json());
+         const data=await apiJson(optionData);
          const controls={country:form.elements.country,city:form.elements.city,state:form.elements.state,category:form.elements.category};
          function fill(name,items,selected=""){
           const el=controls[name],previous=selected||el.value;el.innerHTML='<option value="">All</option>';
@@ -440,11 +448,19 @@ export default {
         async function load(){
          const params=new URLSearchParams(new FormData(form));for(const [k,v] of [...params])if(!v)params.delete(k);
          const url=endpoint+(params.size?"?"+params.toString():"");
-         try{const res=await fetch(url);if(!res.ok)throw new Error("HTTP "+res.status);render(await res.json());
+         count.textContent="Loading records…";
+         try{
+          const rows=await apiJson(url);
+          if(!Array.isArray(rows))throw new Error("Unexpected API response format.");
+          render(rows);
           const exportButton=document.getElementById("exportRows");if(exportButton){const exportParams=new URLSearchParams(params);exportButton.href="/api/export.csv?"+exportParams.toString()}
-         }catch(e){count.textContent="Could not load records: "+e.message}
+         }catch(e){
+          const message=e&&e.message?e.message:"Unknown network error";
+          count.textContent="Could not load records: "+message;
+          body.innerHTML='<tr><td colspan="'+(fields.length+1)+'" class="empty">'+message.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))+'</td></tr>';
+         }
         }
-        form.addEventListener("submit",e=>{e.preventDefault();load()});form.addEventListener("reset",()=>setTimeout(()=>{populateBusinessOptions().then(load)},0));
+        form.addEventListener("submit",e=>{e.preventDefault();load()});form.addEventListener("reset",()=>setTimeout(load,0));
         document.getElementById("closeDialog").addEventListener("click",()=>dialog.close());
         body.addEventListener("click",async e=>{
          const b=e.target.closest("button[data-action]");if(!b)return;const r=records[Number(b.dataset.index)];if(!r)return;
@@ -453,7 +469,8 @@ export default {
          if(action==="phone"||action==="email"||action==="copy"){const value=action==="phone"?r.phone:action==="email"?r.email:[r.subject||"",r.message||""].filter(Boolean).join("\n\n");try{await navigator.clipboard.writeText(value);b.textContent="Copied";}catch{details.textContent=value;dialog.showModal()}return}
          if(action==="website"){const target=r.website_url||r.requested_url;if(target){const u=new URL(target,location.origin);if(["http:","https:"].includes(u.protocol))window.open(u.href,"_blank","noopener,noreferrer")}return}
         });
-        populateBusinessOptions().then(load).catch(()=>load());
+        load();
+        if(kind==="Businesses")populateBusinessOptions().catch(e=>{count.textContent="Filter options unavailable: "+e.message;});
        })();
        </script>`,active));
    };
