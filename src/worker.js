@@ -274,11 +274,20 @@ async function api(req, env, path) {
     const rows=await env.DB.prepare(sql).bind(...p).all();return json(rows.results)
   }
   if(path==="/api/export.csv"){
-    const u=new URL(req.url),city=u.searchParams.get("city")||"",state=u.searchParams.get("state")||"",status=u.searchParams.get("status")||"",minScore=Number(u.searchParams.get("minScore")||0);
+    const u=new URL(req.url),q=u.searchParams.get("q")||"",city=u.searchParams.get("city")||"",state=u.searchParams.get("state")||"",status=u.searchParams.get("status")||"",category=u.searchParams.get("category")||"",websiteStatus=u.searchParams.get("websiteStatus")||"",website=u.searchParams.get("website")||"",contact=u.searchParams.get("contact")||"",activity=u.searchParams.get("activity")||"",minScore=Number(u.searchParams.get("minScore")||0);
     let sql="SELECT name,category,city,state,phone,email,phone_verification,email_verification,website_url,website_status,activity_status,activity_score,qualification_status,qualification_reason,confidence_score,opportunity_score,source_url,discovery_source FROM businesses WHERE 1=1",p=[];
+    if(q){sql+=" AND (name LIKE ? OR city LIKE ? OR state LIKE ? OR category LIKE ?)";p.push(...Array(4).fill("%"+q+"%"))}
     if(city){sql+=" AND city LIKE ?";p.push("%"+city+"%")}
     if(state){sql+=" AND state LIKE ?";p.push("%"+state+"%")}
     if(status){sql+=" AND qualification_status=?";p.push(status)}
+    if(category){sql+=" AND category LIKE ?";p.push("%"+category+"%")}
+    if(websiteStatus){sql+=" AND website_status=?";p.push(websiteStatus)}
+    if(website==="missing")sql+=" AND (website_url IS NULL OR website_url='')";
+    if(website==="present")sql+=" AND website_url IS NOT NULL AND website_url<>''";
+    if(contact==="email")sql+=" AND email IS NOT NULL AND email<>''";
+    if(contact==="phone")sql+=" AND phone IS NOT NULL AND phone<>''";
+    if(contact==="both")sql+=" AND phone IS NOT NULL AND phone<>'' AND email IS NOT NULL AND email<>''";
+    if(activity){sql+=" AND activity_status=?";p.push(activity)}
     if(minScore>0){sql+=" AND opportunity_score>=?";p.push(Math.min(100,minScore))}
     sql+=" ORDER BY opportunity_score DESC";
     const rows=await env.DB.prepare(sql).bind(...p).all();
