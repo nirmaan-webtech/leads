@@ -231,13 +231,16 @@ async function api(req, env, path) {
     return json({businesses:b.n,audits:a.n,runs:r.n,drafts:o.n,qualified:qualified.n,recentRuns:latest.results});
   }
   if(path==="/api/filter-options"){
-    const [countries,cities,states,categories]=await Promise.all([
+    const [countries,cities,states,categories,websiteStatuses,activities,qualifications]=await Promise.all([
       env.DB.prepare("SELECT DISTINCT country value FROM businesses WHERE country IS NOT NULL AND country<>'' ORDER BY country").all(),
       env.DB.prepare("SELECT DISTINCT city value,country,state FROM businesses WHERE city IS NOT NULL AND city<>'' ORDER BY city").all(),
       env.DB.prepare("SELECT DISTINCT state value,country FROM businesses WHERE state IS NOT NULL AND state<>'' ORDER BY state").all(),
-      env.DB.prepare("SELECT DISTINCT category value,country FROM businesses WHERE category IS NOT NULL AND category<>'' ORDER BY category").all()
+      env.DB.prepare("SELECT DISTINCT category value,country FROM businesses WHERE category IS NOT NULL AND category<>'' ORDER BY category").all(),
+      env.DB.prepare("SELECT DISTINCT website_status value FROM businesses WHERE website_status IS NOT NULL AND website_status<>'' ORDER BY website_status").all(),
+      env.DB.prepare("SELECT DISTINCT activity_status value FROM businesses WHERE activity_status IS NOT NULL AND activity_status<>'' ORDER BY activity_status").all(),
+      env.DB.prepare("SELECT DISTINCT qualification_status value FROM businesses WHERE qualification_status IS NOT NULL AND qualification_status<>'' ORDER BY qualification_status").all()
     ]);
-    return json({countries:countries.results,cities:cities.results,states:states.results,categories:categories.results});
+    return json({countries:countries.results,cities:cities.results,states:states.results,categories:categories.results,websiteStatuses:websiteStatuses.results,activities:activities.results,qualifications:qualifications.results});
   }
   if (path==="/api/businesses") {
     const u=new URL(req.url), q=u.searchParams.get("q")||"", status=u.searchParams.get("status")||"",country=u.searchParams.get("country")||"",city=u.searchParams.get("city")||"",state=u.searchParams.get("state")||"",website=u.searchParams.get("website")||"",contact=u.searchParams.get("contact")||"",minScore=Number(u.searchParams.get("minScore")||0);
@@ -284,9 +287,10 @@ async function api(req, env, path) {
     const rows=await env.DB.prepare(sql).bind(...p).all();return json(rows.results)
   }
   if(path==="/api/export.csv"){
-    const u=new URL(req.url),q=u.searchParams.get("q")||"",city=u.searchParams.get("city")||"",state=u.searchParams.get("state")||"",status=u.searchParams.get("status")||"",category=u.searchParams.get("category")||"",websiteStatus=u.searchParams.get("websiteStatus")||"",website=u.searchParams.get("website")||"",contact=u.searchParams.get("contact")||"",activity=u.searchParams.get("activity")||"",minScore=Number(u.searchParams.get("minScore")||0);
+    const u=new URL(req.url),q=u.searchParams.get("q")||"",country=u.searchParams.get("country")||"",city=u.searchParams.get("city")||"",state=u.searchParams.get("state")||"",status=u.searchParams.get("status")||"",category=u.searchParams.get("category")||"",websiteStatus=u.searchParams.get("websiteStatus")||"",website=u.searchParams.get("website")||"",contact=u.searchParams.get("contact")||"",activity=u.searchParams.get("activity")||"",minScore=Number(u.searchParams.get("minScore")||0);
     let sql="SELECT name,category,city,state,phone,email,phone_verification,email_verification,website_url,website_status,activity_status,activity_score,qualification_status,qualification_reason,confidence_score,opportunity_score,source_url,discovery_source FROM businesses WHERE 1=1",p=[];
     if(q){sql+=" AND (name LIKE ? OR city LIKE ? OR state LIKE ? OR category LIKE ?)";p.push(...Array(4).fill("%"+q+"%"))}
+    if(country){sql+=" AND country=?";p.push(country)}
     if(city){sql+=" AND city LIKE ?";p.push("%"+city+"%")}
     if(state){sql+=" AND state LIKE ?";p.push("%"+state+"%")}
     if(status){sql+=" AND qualification_status=?";p.push(status)}
@@ -409,7 +413,7 @@ export default {
         async function populateBusinessOptions(){
          if(kind!=="Businesses")return;
          const data=await apiJson(optionData);
-         const controls={country:form.elements.country,city:form.elements.city,state:form.elements.state,category:form.elements.category};
+         const controls={country:form.elements.country,city:form.elements.city,state:form.elements.state,category:form.elements.category,websiteStatus:form.elements.websiteStatus,activity:form.elements.activity,status:form.elements.status};
          function fill(name,items,selected=""){
           const el=controls[name],previous=selected||el.value;el.innerHTML='<option value="">All</option>';
           for(const item of items){if(!item.value)continue;const opt=document.createElement("option");opt.value=item.value;opt.textContent=item.value;el.appendChild(opt)}
@@ -422,6 +426,7 @@ export default {
           fill("category",data.categories.filter(x=>!country||x.country===country),controls.category.value);
          }
          fill("country",data.countries);fill("city",data.cities);fill("state",data.states);fill("category",data.categories);
+         fill("websiteStatus",data.websiteStatuses);fill("activity",data.activities);fill("status",data.qualifications);
          controls.country.addEventListener("change",()=>{controls.city.value="";controls.state.value="";controls.category.value="";update()});
          controls.state.addEventListener("change",()=>{controls.city.value="";update()});
          update();
