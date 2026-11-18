@@ -458,7 +458,7 @@ export default {
           if(sequence!==loadSequence)return;
           if(!Array.isArray(rows))throw new Error("Unexpected API response format.");
           render(rows);
-          const exportButton=document.getElementById("exportRows");if(exportButton){exportButton.href="/api/export.csv"+(params.size?"?"+params.toString():"")}
+          const exportButton=document.getElementById("exportRows");if(exportButton){exportButton.href="/api/export.csv"}
          }catch(e){
           if(sequence!==loadSequence||e.name==="AbortError")return;
           const message=e&&e.message?e.message:"Unknown network error";
