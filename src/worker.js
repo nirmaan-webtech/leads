@@ -428,10 +428,19 @@ export default {
         const fields=${JSON.stringify(cols.map(x=>x[0]))},kind=${JSON.stringify(active)},endpoint=${JSON.stringify(endpoint)};
         const optionData="/api/filter-options";
         async function apiJson(url,options={}){
-         const res=await fetch(url,{credentials:"same-origin",headers:{accept:"application/json",...(options.headers||{})},...options});
+         const timeout=AbortSignal.timeout(12000);
+         const signal=options.signal?AbortSignal.any([options.signal,timeout]):timeout;
+         let res;
+         try{
+          res=await fetch(url,{...options,signal,cache:"no-store",credentials:"same-origin",headers:{accept:"application/json",...(options.headers||{})}});
+         }catch(e){
+          if(timeout.aborted&&!options.signal?.aborted)throw new Error("API request timed out after 12 seconds: "+url+". Check the Pages BACKEND service binding and Worker response.");
+          throw e;
+         }
          const type=res.headers.get("content-type")||"";
-         if(res.redirected||!type.includes("application/json"))throw new Error("API returned a sign-in page or non-JSON response. Sign in again, then reload.");
-         const data=await res.json();
+         if(res.redirected||!type.includes("application/json"))throw new Error("API returned HTTP "+res.status+" with "+(type||"no content-type")+" instead of JSON. Check authentication and Pages BACKEND routing.");
+         let data;
+         try{data=await res.json()}catch{throw new Error("API returned invalid JSON (HTTP "+res.status+").");}
          if(!res.ok)throw new Error(data.detail||data.error||("HTTP "+res.status));
          return data;
         }
