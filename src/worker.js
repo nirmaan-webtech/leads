@@ -260,7 +260,7 @@ async function api(req, env, path) {
       env.DB.prepare("SELECT DISTINCT country value FROM businesses WHERE country IS NOT NULL AND country<>'' ORDER BY country").all(),
       env.DB.prepare("SELECT DISTINCT city value,country,state FROM businesses WHERE city IS NOT NULL AND city<>'' ORDER BY city").all(),
       env.DB.prepare("SELECT DISTINCT state value,country FROM businesses WHERE state IS NOT NULL AND state<>'' ORDER BY state").all(),
-      env.DB.prepare("SELECT DISTINCT category value,country FROM businesses WHERE category IS NOT NULL AND category<>'' ORDER BY category").all(),
+      env.DB.prepare("SELECT DISTINCT category value,country,state,city FROM businesses WHERE category IS NOT NULL AND category<>'' ORDER BY category").all(),
       env.DB.prepare("SELECT DISTINCT website_status value FROM businesses WHERE website_status IS NOT NULL AND website_status<>'' ORDER BY website_status").all(),
       env.DB.prepare("SELECT DISTINCT activity_status value FROM businesses WHERE activity_status IS NOT NULL AND activity_status<>'' ORDER BY activity_status").all(),
       env.DB.prepare("SELECT DISTINCT qualification_status value FROM businesses WHERE qualification_status IS NOT NULL AND qualification_status<>'' ORDER BY qualification_status").all()
@@ -273,12 +273,12 @@ async function api(req, env, path) {
     if(q){query+=" AND (name LIKE ? OR city LIKE ? OR state LIKE ? OR category LIKE ?)";params.push(...Array(4).fill("%"+q+"%"))}
     if(status){query+=" AND qualification_status=?";params.push(status)}
     if(country){query+=" AND country=?";params.push(country)}
-    if(city){query+=" AND city LIKE ?";params.push("%"+city+"%")}
-    if(state){query+=" AND state LIKE ?";params.push("%"+state+"%")}
+    if(city){query+=" AND city=?";params.push(city)}
+    if(state){query+=" AND state=?";params.push(state)}
     if(website==="missing")query+=" AND (website_url IS NULL OR website_url='')";
     if(website==="present")query+=" AND website_url IS NOT NULL AND website_url<>''";
     const category=u.searchParams.get("category")||"", websiteStatus=u.searchParams.get("websiteStatus")||"";
-    if(category){query+=" AND category LIKE ?";params.push("%"+category+"%")}
+    if(category){query+=" AND category=?";params.push(category)}
     if(websiteStatus){query+=" AND website_status=?";params.push(websiteStatus)}
     const activity=u.searchParams.get("activity")||"";
     if(activity){query+=" AND activity_status=?";params.push(activity)}
@@ -316,10 +316,10 @@ async function api(req, env, path) {
     let sql="SELECT name,category,city,state,phone,email,phone_verification,email_verification,website_url,website_status,activity_status,activity_score,qualification_status,qualification_reason,confidence_score,opportunity_score,source_url,discovery_source FROM businesses WHERE 1=1",p=[];
     if(q){sql+=" AND (name LIKE ? OR city LIKE ? OR state LIKE ? OR category LIKE ?)";p.push(...Array(4).fill("%"+q+"%"))}
     if(country){sql+=" AND country=?";p.push(country)}
-    if(city){sql+=" AND city LIKE ?";p.push("%"+city+"%")}
-    if(state){sql+=" AND state LIKE ?";p.push("%"+state+"%")}
+    if(city){sql+=" AND city=?";p.push(city)}
+    if(state){sql+=" AND state=?";p.push(state)}
     if(status){sql+=" AND qualification_status=?";p.push(status)}
-    if(category){sql+=" AND category LIKE ?";p.push("%"+category+"%")}
+    if(category){sql+=" AND category=?";p.push(category)}
     if(websiteStatus){sql+=" AND website_status=?";p.push(websiteStatus)}
     if(website==="missing")sql+=" AND (website_url IS NULL OR website_url='')";
     if(website==="present")sql+=" AND website_url IS NOT NULL AND website_url<>''";
@@ -445,19 +445,20 @@ export default {
           if([...el.options].some(o=>o.value===previous))el.value=previous;
          }
          function update(){
-          const country=controls.country.value,state=controls.state.value;
-          fill("city",data.cities.filter(x=>(!country||x.country===country)&&(!state||x.state===state)),controls.city.value);
-          fill("state",data.states.filter(x=>!country||x.country===country),controls.state.value);
-          fill("category",data.categories.filter(x=>!country||x.country===country),controls.category.value);
+          const country=controls.country.value,state=controls.state.value,city=controls.city.value;
+          fill("state",data.states.filter(x=>!country||x.country===country),state);
+          fill("city",data.cities.filter(x=>(!country||x.country===country)&&(!state||x.state===state)),city);
+          fill("category",data.categories.filter(x=>(!country||x.country===country)&&(!state||x.state===state)&&(!city||x.city===city)),controls.category.value);
          }
          fill("country",data.countries);fill("city",data.cities);fill("state",data.states);fill("category",data.categories);
          fill("websiteStatus",data.websiteStatuses);fill("activity",data.activities);fill("status",data.qualifications);
          controls.country.addEventListener("change",()=>{controls.city.value="";controls.state.value="";controls.category.value="";update()});
          controls.state.addEventListener("change",()=>{controls.city.value="";update()});
+         controls.city.addEventListener("change",()=>{controls.category.value="";update()});
          update();
         }
 
-        let records=[];
+        let records=[],loadSequence=0,activeLoad=null;
         function esc(v){return String(v??"—")}
         function button(action,label){return '<button type="button" class="actionBtn" data-action="'+action+'">'+label+'</button>'}
         function actions(r){
@@ -476,15 +477,20 @@ export default {
          }
         }
         async function load(){
+         const sequence=++loadSequence;
+         if(activeLoad)activeLoad.abort();
+         activeLoad=new AbortController();
          const params=new URLSearchParams(new FormData(form));for(const [k,v] of [...params])if(!v)params.delete(k);
          const url=endpoint+(params.size?"?"+params.toString():"");
          count.textContent="Loading records…";
          try{
-          const rows=await apiJson(url);
+          const rows=await apiJson(url,{signal:activeLoad.signal});
+          if(sequence!==loadSequence)return;
           if(!Array.isArray(rows))throw new Error("Unexpected API response format.");
           render(rows);
-          const exportButton=document.getElementById("exportRows");if(exportButton){const exportParams=new URLSearchParams(params);exportButton.href="/api/export.csv?"+exportParams.toString()}
+          const exportButton=document.getElementById("exportRows");if(exportButton){exportButton.href="/api/export.csv"+(params.size?"?"+params.toString():"")}
          }catch(e){
+          if(sequence!==loadSequence||e.name==="AbortError")return;
           const message=e&&e.message?e.message:"Unknown network error";
           count.textContent="Could not load records: "+message;
           body.innerHTML='<tr><td colspan="'+(fields.length+1)+'" class="empty">'+message.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))+'</td></tr>';
