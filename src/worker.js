@@ -239,6 +239,12 @@ async function api(req, env, path) {
     if(state){query+=" AND state LIKE ?";params.push("%"+state+"%")}
     if(website==="missing")query+=" AND (website_url IS NULL OR website_url='')";
     if(website==="present")query+=" AND website_url IS NOT NULL AND website_url<>''";
+    const category=u.searchParams.get("category")||"", websiteStatus=u.searchParams.get("websiteStatus")||"";
+    if(category){query+=" AND category LIKE ?";params.push("%"+category+"%")}
+    if(websiteStatus){query+=" AND website_status=?";params.push(websiteStatus)}
+    const activity=u.searchParams.get("activity")||"";
+    if(activity){query+=" AND activity_status=?";params.push(activity)}
+
     if(contact==="email")query+=" AND email IS NOT NULL AND email<>''";
     if(contact==="phone")query+=" AND phone IS NOT NULL AND phone<>''";
     if(contact==="both")query+=" AND phone IS NOT NULL AND phone<>'' AND email IS NOT NULL AND email<>''";
@@ -248,8 +254,25 @@ async function api(req, env, path) {
     return json(rows.results);
   }
   if(path==="/api/runs"){const rows=await env.DB.prepare("SELECT * FROM research_runs ORDER BY started_at DESC LIMIT 100").all();return json(rows.results)}
-  if(path==="/api/audits"){const rows=await env.DB.prepare("SELECT a.*,b.name,b.website_url FROM website_audits a LEFT JOIN businesses b ON b.id=a.business_id ORDER BY a.checked_at DESC LIMIT 100").all();return json(rows.results)}
-  if(path==="/api/outreach"){const rows=await env.DB.prepare("SELECT o.*,b.name FROM outreach_drafts o LEFT JOIN businesses b ON b.id=o.business_id ORDER BY o.created_at DESC LIMIT 100").all();return json(rows.results)}
+  if(path==="/api/audits"){
+    const u=new URL(req.url),status=u.searchParams.get("status")||"",minScore=Number(u.searchParams.get("minScore")||0),maxScore=Number(u.searchParams.get("maxScore")||100),q=u.searchParams.get("q")||"";
+    let sql="SELECT a.*,b.name,b.website_url FROM website_audits a LEFT JOIN businesses b ON b.id=a.business_id WHERE 1=1",p=[];
+    if(status){sql+=" AND a.mobile_test_status=?";p.push(status)}
+    if(minScore>0){sql+=" AND a.audit_score>=?";p.push(minScore)}
+    if(maxScore<100){sql+=" AND a.audit_score<=?";p.push(maxScore)}
+    if(q){sql+=" AND (b.name LIKE ? OR b.website_url LIKE ?)";p.push("%"+q+"%","%"+q+"%")}
+    sql+=" ORDER BY a.checked_at DESC LIMIT 100";
+    const rows=await env.DB.prepare(sql).bind(...p).all();return json(rows.results)
+  }
+  if(path==="/api/outreach"){
+    const u=new URL(req.url),status=u.searchParams.get("status")||"",channel=u.searchParams.get("channel")||"",q=u.searchParams.get("q")||"";
+    let sql="SELECT o.*,b.name FROM outreach_drafts o LEFT JOIN businesses b ON b.id=o.business_id WHERE 1=1",p=[];
+    if(status){sql+=" AND o.status=?";p.push(status)}
+    if(channel){sql+=" AND o.channel=?";p.push(channel)}
+    if(q){sql+=" AND (b.name LIKE ? OR o.subject LIKE ? OR o.message LIKE ?)";p.push("%"+q+"%","%"+q+"%","%"+q+"%")}
+    sql+=" ORDER BY o.created_at DESC LIMIT 100";
+    const rows=await env.DB.prepare(sql).bind(...p).all();return json(rows.results)
+  }
   if(path==="/api/export.csv"){
     const u=new URL(req.url),city=u.searchParams.get("city")||"",state=u.searchParams.get("state")||"",status=u.searchParams.get("status")||"",minScore=Number(u.searchParams.get("minScore")||0);
     let sql="SELECT name,category,city,state,phone,email,phone_verification,email_verification,website_url,website_status,activity_status,activity_score,qualification_status,qualification_reason,confidence_score,opportunity_score,source_url,discovery_source FROM businesses WHERE 1=1",p=[];
@@ -330,9 +353,67 @@ export default {
     return html(shell("Overview",`<div class="grid">${cards}</div><div class="panel"><div class="row"><div><h2>Research engine</h2><div class="hint">OpenStreetMap public data · one city per run · duplicate filtering · up to 10 homepage checks · unsent outreach drafts. Map listing does not prove current trading.</div></div><button class="btn" id="runNow">Run discovery now</button></div><p class="hint" id="runStatus">Automatic schedule: every 2 hours · India city rotation · 50 target records (actual qualified count may be lower).</p></div><script>document.getElementById("runNow").addEventListener("click",async()=>{const b=document.getElementById("runNow"),s=document.getElementById("runStatus");b.disabled=true;b.textContent="Running…";s.textContent="Scanning city and checking candidate websites…";try{const r=await fetch("/api/run",{method:"POST"}),d=await r.json();s.textContent=r.ok?("Run "+d.status+" · "+d.city+", "+d.state+" · found "+d.discovered+" · qualified "+d.qualified+" · duplicates "+d.duplicates+" · audits "+d.audited+" · drafts "+d.drafts):("Run failed: "+(d.detail||d.error));}catch(e){s.textContent="Request failed: "+e.message;}finally{b.disabled=false;b.textContent="Run discovery now";}});</script><div class="panel"><h2>Recent research runs</h2><div class="tablewrap"><table><thead><tr><th>Started</th><th>Status</th><th>Found</th><th>Qualified</th><th>Notes</th></tr></thead><tbody>${rows||'<tr><td colspan="5" class="empty">No runs yet</td></tr>'}</tbody></table></div></div>`));
    }
    const tablePage=async(title,active,endpoint,cols)=>{
-     return html(shell(title,`<div class="panel"><div class="row"><div><h2>${title}</h2><div class="hint">Latest 100 records. Business export is available in CSV format.</div></div><a class="btn secondary" href="/api/export.csv">Export CSV</a></div><div class="tablewrap"><table id="data"><thead><tr>${cols.map(c=>`<th>${c[1]}</th>`).join("")}</tr></thead><tbody><tr><td colspan="${cols.length}" class="empty">Loading…</td></tr></tbody></table></div></div><script>
-fetch("${endpoint}").then(r=>r.json()).then(rows=>{const tb=document.querySelector("#data tbody");tb.innerHTML="";if(!rows.length){tb.innerHTML='<tr><td colspan="${cols.length}" class="empty">No records yet</td></tr>';return}for(const r of rows){const tr=document.createElement("tr");tr.innerHTML=${JSON.stringify(cols.map(c=>c[0]))}.map(k=>{const td=document.createElement("td");td.textContent=r[k]??"—";return td.outerHTML}).join("");tb.appendChild(tr)}}).catch(()=>document.querySelector("#data tbody").innerHTML='<tr><td class="empty">Could not load data</td></tr>');
-</script>`,active));
+     const filterFields=active==="Businesses"?[
+       ["q","Search name / city / category","text"],["city","City","text"],["state","State","text"],["category","Category","text"],
+       ["status","Qualification","select","",["pending","qualified","screened_out"]],
+       ["websiteStatus","Website status","select","",["missing","unverified","reachable","unreachable","http_error","excluded_non_target"]],
+       ["website","Website URL","select","",["missing","present"]],
+       ["contact","Contact","select","",["email","phone","both"]],
+       ["activity","Activity","select","",["active","unverified","inactive"]],
+       ["minScore","Min opportunity score","number"]
+     ]:active==="Audits"?[
+       ["q","Search business / URL","text"],["status","Mobile check","select","",["viewport_meta_present","viewport_meta_missing","not_applicable"]],["minScore","Min audit score","number"],["maxScore","Max audit score","number"]
+     ]:[
+       ["q","Search business / subject / message","text"],["status","Draft status","select","",["draft","approved","sent","archived"]],["channel","Channel","select","",["email","manual_review","whatsapp"]]
+     ];
+     const controls=filterFields.map(([name,label,type,,opts])=>type==="select"?'<label class="filterField">'+label+'<select name="'+name+'"><option value="">All</option>'+opts.map(v=>'<option value="'+v+'">'+v.replaceAll("_"," ")+'</option>').join("")+'</select></label>':'<label class="filterField">'+label+'<input name="'+name+'" type="'+type+'" '+(type==="number"?'min="0" max="100"':'')+' placeholder="'+label+'"></label>').join("");
+     const exportLink=active==="Businesses"?'<a class="btn secondary" id="exportRows" href="/api/export.csv">Export filtered CSV</a>':'';
+     return html(shell(title,`<div class="panel"><div class="row"><div><h2>${title}</h2><div class="hint">Filter records and use row-level actions. Maximum 100 records per view.</div></div>${exportLink}</div>
+       <form id="filters" class="filters">${controls}<div class="filterActions"><button class="btn" type="submit">Apply filters</button><button class="btn secondary" type="reset">Clear</button></div></form>
+       <div class="hint" id="resultCount" style="margin:10px 0">Loading records…</div>
+       <div class="tablewrap"><table id="data"><thead><tr>${cols.map(x=>'<th>'+x[1]+'</th>').join("")}<th>Actions</th></tr></thead><tbody><tr><td colspan="${cols.length+1}" class="empty">Loading…</td></tr></tbody></table></div></div>
+       <dialog id="recordDialog" style="max-width:680px;width:90%;background:#111827;color:#edf2fb;border:1px solid #314059;border-radius:12px;padding:22px"><button class="btn secondary" id="closeDialog" style="float:right">Close</button><h2>Record details</h2><pre id="recordDetails" style="white-space:pre-wrap;overflow-wrap:anywhere;color:#d8e2f2"></pre></dialog>
+       <style>.filters{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin-top:18px}.filterField{font-size:12px;color:#96a3b8;margin:0}.filterField input,.filterField select{margin-top:6px}.filterActions{display:flex;gap:8px;align-items:end}.actionBtn{padding:7px 9px;margin:2px;border:1px solid #314059;border-radius:7px;background:#1b2b43;color:#edf2fb;cursor:pointer;font-size:12px}.actionBtn:hover{border-color:#d7b56d}.actions{min-width:160px}.filters input,.filters select{min-width:0}@media(max-width:900px){.filters{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:520px){.filters{grid-template-columns:1fr}.filterActions{align-items:center}}</style>
+       <script>
+       (function(){
+        const form=document.getElementById("filters"),body=document.querySelector("#data tbody"),count=document.getElementById("resultCount"),dialog=document.getElementById("recordDialog"),details=document.getElementById("recordDetails");
+        const fields=${JSON.stringify(cols.map(x=>x[0]))},kind=${JSON.stringify(active)},endpoint=${JSON.stringify(endpoint)};
+        let records=[];
+        function esc(v){return String(v??"—")}
+        function button(action,label){return '<button type="button" class="actionBtn" data-action="'+action+'">'+label+'</button>'}
+        function actions(r){
+         if(kind==="Businesses")return button("view","View")+ (r.phone?button("phone","Copy phone"):"")+(r.email?button("email","Copy email"):"")+(r.website_url?button("website","Open site"):"");
+         if(kind==="Audits")return (r.requested_url?button("website","Open site"):"")+button("view","Findings");
+         return button("copy","Copy draft")+button("view","View");
+        }
+        function render(rows){
+         records=rows;body.innerHTML="";
+         count.textContent=rows.length+" record(s) shown";
+         if(!rows.length){body.innerHTML='<tr><td colspan="'+(fields.length+1)+'" class="empty">No matching records</td></tr>';return}
+         for(let i=0;i<rows.length;i++){const r=rows[i],tr=document.createElement("tr");
+          for(const k of fields){const td=document.createElement("td");let val=r[k];if(k==="website_url"||k==="requested_url"){td.textContent=val||"—";}else if(k.endsWith("_json")&&val){try{td.textContent=JSON.stringify(JSON.parse(val));}catch{td.textContent=val}}else td.textContent=val??"—";tr.appendChild(td)}
+          const td=document.createElement("td");td.className="actions";td.innerHTML=actions(r);td.querySelectorAll("button").forEach(b=>b.dataset.index=i);tr.appendChild(td);body.appendChild(tr);
+         }
+        }
+        async function load(){
+         const params=new URLSearchParams(new FormData(form));for(const [k,v] of [...params])if(!v)params.delete(k);
+         const url=endpoint+(params.size?"?"+params.toString():"");
+         try{const res=await fetch(url);if(!res.ok)throw new Error("HTTP "+res.status);render(await res.json());
+          const exportButton=document.getElementById("exportRows");if(exportButton){const exportParams=new URLSearchParams(params);exportButton.href="/api/export.csv?"+exportParams.toString()}
+         }catch(e){count.textContent="Could not load records: "+e.message}
+        }
+        form.addEventListener("submit",e=>{e.preventDefault();load()});form.addEventListener("reset",()=>setTimeout(load,0));
+        document.getElementById("closeDialog").addEventListener("click",()=>dialog.close());
+        body.addEventListener("click",async e=>{
+         const b=e.target.closest("button[data-action]");if(!b)return;const r=records[Number(b.dataset.index)];if(!r)return;
+         const action=b.dataset.action;
+         if(action==="view"){details.textContent=JSON.stringify(r,null,2);dialog.showModal();return}
+         if(action==="phone"||action==="email"||action==="copy"){const value=action==="phone"?r.phone:action==="email"?r.email:[r.subject||"",r.message||""].filter(Boolean).join("\n\n");try{await navigator.clipboard.writeText(value);b.textContent="Copied";}catch{details.textContent=value;dialog.showModal()}return}
+         if(action==="website"){const target=r.website_url||r.requested_url;if(target){const u=new URL(target,location.origin);if(["http:","https:"].includes(u.protocol))window.open(u.href,"_blank","noopener,noreferrer")}return}
+        });
+        load();
+       })();
+       </script>`,active));
    };
    if(path==="/businesses")return await tablePage("Businesses","Businesses","/api/businesses",[["name","Business"],["category","Category"],["city","City"],["state","State"],["phone","Phone"],["phone_verification","Phone check"],["email","Email"],["email_verification","Email check"],["website_url","Website"],["website_status","Website status"],["activity_status","Activity"],["activity_score","Activity score"],["qualification_status","Qualification"],["qualification_reason","Qualification reason"],["confidence_score","Confidence"],["opportunity_score","Opportunity"]]);
    if(path==="/audits")return await tablePage("Website audits","Audits","/api/audits",[["name","Business"],["requested_url","Requested URL"],["http_status","HTTP"],["ssl_valid","SSL"],["mobile_test_status","Mobile viewport"],["mobile_heuristic_score","Mobile heuristic"],["audit_score","Audit score"],["links_checked","Links checked"],["broken_links_count","Broken links"],["forms_detected","Forms detected"],["contact_emails_json","Extracted emails"],["checked_at","Checked"]]);
