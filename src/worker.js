@@ -149,6 +149,18 @@ async function engAudit(biz){
  const status=!res||error?(String(error).includes("redirected")?"redirect_requires_manual_review":"unreachable"):res.status>=400?"http_error":findings.length?"needs_review":"reachable_basic_checks_passed";
  return {status,findings,audit:{id:uuid(),checked,requested:url,final:finalUrl,http:res?res.status:null,ssl:finalUrl.startsWith("https://")?1:0,mobile:viewport?"viewport_meta_present":"viewport_meta_missing",desktop:res?"http_response_received":"not_reached",title:cleanTitle,linksChecked,brokenLinks:broken,forms,emails,mobileScore:Math.max(0,100-(viewport?0:35)-(mediaQueries?0:20)),auditScore:Math.max(0,100-(res&&res.status<400?0:35)-(url.startsWith("https://")?0:15)-(cleanTitle?0:10)-(viewport?0:15)-(description?0:5)-(h1?0:5)-Math.min(broken.length*3,15)),evidence:{elapsed_ms:elapsed,content_type:res?res.headers.get("content-type"):null,html_bytes:htmlText.length,has_viewport:viewport,has_meta_description:description,h1_count:h1,media_query_count:mediaQueries,forms_detected:forms,limitations:["Mobile score is a markup heuristic, not a real mobile browser test.","Forms are detected, never submitted.","Only up to 5 same-origin links are checked with HEAD.","No Lighthouse/PageSpeed or visual rendering."]}}};
 }
+async function engOsmDetails(sourceUrl){
+ const match=String(sourceUrl||"").match(/^https:\/\/www\.openstreetmap\.org\/(node|way|relation)\/(\d+)$/);
+ if(!match)return {};
+ try{
+  const endpoint="https://api.openstreetmap.org/api/0.6/"+match[1]+"/"+match[2]+".json";
+  const response=await fetch(endpoint,{headers:{"accept":"application/json","user-agent":"NirmaanLeadHunter/1.0 (public OSM tag enrichment)"},signal:AbortSignal.timeout(5000)});
+  if(!response.ok)return {};
+  const payload=await response.json();
+  const element=(payload.elements||[]).find(x=>x.type===match[1]&&String(x.id)===match[2]);
+  return element&&element.tags&&typeof element.tags==="object"?element.tags:{};
+ }catch{return {};}
+}
 async function engEmailCheck(email){
  const value=String(email||"").trim().toLowerCase();
  if(!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value))return "invalid_format";
@@ -170,6 +182,7 @@ function engOutreach(biz,findings){
 }
 async function engRun(env){
  const runId=uuid(),started=new Date().toISOString();
+ await env.DB.prepare("UPDATE research_runs SET status='failed',completed_at=CURRENT_TIMESTAMP,notes='Marked failed: execution did not finish within 20 minutes.' WHERE status='running' AND started_at < datetime('now','-20 minutes')").run();
  await env.DB.prepare("INSERT INTO research_runs(id,started_at,target_count,status,notes) VALUES(?,?,50,'running','OpenStreetMap discovery; one city per run; trading status not independently verified')").bind(runId,started).run();
  let discovered=0,qualified=0,duplicates=0,failed=0,audited=0,drafts=0,city=null,elements=[],provider="unknown";
  try{
@@ -187,20 +200,25 @@ async function engRun(env){
    if(ins.meta&&ins.meta.changes)discovered++;else duplicates++;
   }
   const candidates=await env.DB.prepare("SELECT * FROM businesses WHERE website_status='unverified' ORDER BY created_at ASC LIMIT 20").all();
-  for(const biz of candidates.results){
+  for(const original of candidates.results){
    try{
-    const a=await engAudit(biz),isLead=["missing","unreachable","http_error","needs_review","redirect_requires_manual_review"].includes(a.status);
-    const extracted=(a.audit&&a.audit.emails||[]).find(e=>!biz.email)||biz.email||null;
-    const emailStatus=extracted?await engEmailCheck(extracted):"not_provided",phoneStatus=engPhoneCheck(biz.phone);
+    const tags=await engOsmDetails(original.source_url);
+    const website=original.website_url||engUrl(engTag(tags,["contact:website","website","url"]));
+    const phone=original.phone||engTag(tags,["contact:phone","phone","mobile"]);
+    const email=original.email||engTag(tags,["contact:email","email"]);
+    const enriched={...original,website_url:website,domain:original.domain||(website?new URL(website).hostname.replace(/^www\\./,"").toLowerCase():null),phone,email,
+      address:original.address||[tags["addr:housenumber"],tags["addr:street"],tags["addr:suburb"],tags["addr:postcode"]].filter(Boolean).join(", ")};
+    const a=await engAudit(enriched),isLead=["missing","unreachable","http_error","needs_review","redirect_requires_manual_review"].includes(a.status);
+    const extracted=(a.audit&&a.audit.emails||[]).find(e=>!enriched.email)||enriched.email||null;
+    const emailStatus=extracted?await engEmailCheck(extracted):"not_provided",phoneStatus=engPhoneCheck(enriched.phone);
     const mobileScore=a.audit?a.audit.mobileScore:0;
-    const activityScore=Math.min(100,(biz.phone?15:0)+(biz.email?10:0)+(biz.website_url?20:0)+(a.status==="reachable_basic_checks_passed"?30:0)+(a.status==="needs_review"?15:0)+(biz.address?10:0)+(biz.name&&biz.category!=="Local business"?10:0));
-    const activityStatus=activityScore>=55?"signals_present_unverified":"insufficient_public_signals";
-    const hasContact=Boolean(biz.phone||biz.email||extracted);
-    const hasAddress=Boolean(biz.address);
-    const isQualified=isLead&&activityScore>=20&&(hasContact||hasAddress);
-    const confidence=Math.min(100,25+(biz.phone?15:0)+(extracted?15:0)+(biz.website_url?15:0)+(biz.address?10:0)+(emailStatus==="mx_found_mailbox_not_verified"?20:0)+(phoneStatus==="india_mobile_format_valid_not_called"?15:0));
-    const opportunity=Math.min(100,(biz.website_url?15:55)+(a.status==="unreachable"||a.status==="http_error"?25:0)+(a.status==="needs_review"?20:0)+(a.status==="missing"?25:0)+(a.audit?Math.min(15,(a.audit.brokenLinks||[]).length*3):0));
-    await env.DB.prepare("UPDATE businesses SET email=COALESCE(email,?),email_verification=?,phone_verification=?,activity_status=?,activity_score=?,qualification_status=?,qualification_reason=?,confidence_score=?,opportunity_score=?,website_status=?,last_verified_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(extracted,emailStatus,phoneStatus,activityStatus,activityScore,isQualified?"qualified":"screened_out",a.findings.join(" "),confidence,opportunity,a.status,new Date().toISOString(),biz.id).run();
+    const hasContact=Boolean(enriched.phone||extracted);
+    const activityScore=Math.min(100,(enriched.phone?25:0)+(extracted?25:0)+(enriched.website_url?15:0)+(a.status==="reachable_basic_checks_passed"?10:0)+(a.status==="needs_review"?5:0)+(enriched.address?10:0)+(enriched.category&&enriched.category!=="Local business"?10:0));
+    const activityStatus=hasContact?"signals_present_unverified":"insufficient_public_signals";
+    const isQualified=isLead&&activityScore>=20&&hasContact;
+    const confidence=Math.min(100,10+(enriched.phone?25:0)+(extracted?25:0)+(enriched.website_url?15:0)+(enriched.address?10:0)+(emailStatus==="mx_found_mailbox_not_verified"?15:0)+(phoneStatus==="india_mobile_format_valid_not_called"?15:0));
+    const opportunity=Math.min(100,(enriched.website_url?10:40)+(hasContact?30:0)+(a.status==="unreachable"||a.status==="http_error"?15:0)+(a.status==="needs_review"?10:0)+(a.status==="missing"?10:0)+(enriched.address?5:0));
+    await env.DB.prepare("UPDATE businesses SET phone=COALESCE(phone,?),email=COALESCE(email,?),website_url=COALESCE(website_url,?),domain=COALESCE(domain,?),address=CASE WHEN address IS NULL OR address='' THEN ? ELSE address END,email_verification=?,phone_verification=?,activity_status=?,activity_score=?,qualification_status=?,qualification_reason=?,confidence_score=?,opportunity_score=?,website_status=?,last_verified_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(enriched.phone||null,extracted,website,enriched.domain,enriched.address||null,emailStatus,phoneStatus,activityStatus,activityScore,isQualified?"qualified":hasContact?"screened_out":"pending",isQualified?"Contact data present; verify the business and website findings manually before outreach.":hasContact?"Contact found but website audit did not identify a qualifying opportunity.":"No public phone/email found; keep pending for manual verification.",confidence,opportunity,a.status,new Date().toISOString(),enriched.id).run();
     if(a.audit){const x=a.audit;await env.DB.prepare("INSERT INTO website_audits(id,business_id,checked_at,requested_url,final_url,http_status,ssl_valid,mobile_test_status,desktop_test_status,broken_links_count,findings_json,evidence_json,links_checked,broken_links_json,forms_detected,contact_emails_json,mobile_heuristic_score,audit_score) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,biz.id,x.checked,x.requested,x.final,x.http,x.ssl,x.mobile,x.desktop,x.brokenLinks.length,JSON.stringify(a.findings),JSON.stringify(x.evidence),x.linksChecked,JSON.stringify(x.brokenLinks),x.forms,JSON.stringify(x.emails),mobileScore,x.auditScore).run();audited++;}else{await env.DB.prepare("INSERT INTO website_audits(id,business_id,checked_at,requested_url,final_url,http_status,ssl_valid,mobile_test_status,desktop_test_status,broken_links_count,findings_json,evidence_json,links_checked,broken_links_json,forms_detected,contact_emails_json,mobile_heuristic_score,audit_score) VALUES(?,?,?,NULL,NULL,NULL,NULL,?,?,0,?,'{}',0,'[]',0,'[]',0,0)").bind(uuid(),biz.id,new Date().toISOString(),a.status,"not_applicable",JSON.stringify(a.findings)).run();audited++;}
     if(isQualified){qualified++;const refreshed=await env.DB.prepare("SELECT * FROM businesses WHERE id=?").bind(biz.id).first();const o=engOutreach(refreshed,a.findings);await env.DB.prepare("INSERT INTO outreach_drafts(id,business_id,channel,subject,message,strategy,status) VALUES(?,?,?,?,?,?,'draft')").bind(uuid(),biz.id,refreshed.email?"email":"manual_review",o.subject,o.message,o.strategy).run();drafts++;}
    }catch(e){failed++;}
