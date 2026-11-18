@@ -454,6 +454,7 @@ export default {
          fill("websiteStatus",data.websiteStatuses);fill("activity",data.activities);fill("status",data.qualifications);
          controls.country.addEventListener("change",()=>{controls.city.value="";controls.state.value="";controls.category.value="";update()});
          controls.state.addEventListener("change",()=>{controls.city.value="";update()});
+         controls.city.addEventListener("change",()=>{controls.category.value="";update()});
          update();
         }
 
