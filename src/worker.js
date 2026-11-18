@@ -149,6 +149,13 @@ async function engAudit(biz){
  const status=!res||error?(String(error).includes("redirected")?"redirect_requires_manual_review":"unreachable"):res.status>=400?"http_error":findings.length?"needs_review":"reachable_basic_checks_passed";
  return {status,findings,audit:{id:uuid(),checked,requested:url,final:finalUrl,http:res?res.status:null,ssl:finalUrl.startsWith("https://")?1:0,mobile:viewport?"viewport_meta_present":"viewport_meta_missing",desktop:res?"http_response_received":"not_reached",title:cleanTitle,linksChecked,brokenLinks:broken,forms,emails,mobileScore:Math.max(0,100-(viewport?0:35)-(mediaQueries?0:20)),auditScore:Math.max(0,100-(res&&res.status<400?0:35)-(url.startsWith("https://")?0:15)-(cleanTitle?0:10)-(viewport?0:15)-(description?0:5)-(h1?0:5)-Math.min(broken.length*3,15)),evidence:{elapsed_ms:elapsed,content_type:res?res.headers.get("content-type"):null,html_bytes:htmlText.length,has_viewport:viewport,has_meta_description:description,h1_count:h1,media_query_count:mediaQueries,forms_detected:forms,limitations:["Mobile score is a markup heuristic, not a real mobile browser test.","Forms are detected, never submitted.","Only up to 5 same-origin links are checked with HEAD.","No Lighthouse/PageSpeed or visual rendering."]}}};
 }
+async function engPool(items,concurrency,handler){
+ let cursor=0;
+ const count=Math.min(Math.max(1,concurrency),items.length);
+ await Promise.all(Array.from({length:count},async()=>{
+  while(true){const index=cursor++;if(index>=items.length)return;await handler(items[index]);}
+ }));
+}
 async function engOsmDetails(sourceUrl){
  const match=String(sourceUrl||"").match(/^https:\/\/www\.openstreetmap\.org\/(node|way|relation)\/(\d+)$/);
  if(!match)return {};
@@ -182,7 +189,7 @@ function engOutreach(biz,findings){
 }
 async function engRun(env){
  const runId=uuid(),started=new Date().toISOString();
- await env.DB.prepare("UPDATE research_runs SET status='failed',completed_at=CURRENT_TIMESTAMP,notes='Marked failed: execution did not finish within 20 minutes.' WHERE status='running' AND started_at < datetime('now','-20 minutes')").run();
+ await env.DB.prepare("UPDATE research_runs SET status='failed',completed_at=CURRENT_TIMESTAMP,notes='Marked failed: execution did not finish within 20 minutes.' WHERE status='running' AND julianday(started_at) < julianday('now','-20 minutes')").run();
  await env.DB.prepare("INSERT INTO research_runs(id,started_at,target_count,status,notes) VALUES(?,?,50,'running','OpenStreetMap discovery; one city per run; trading status not independently verified')").bind(runId,started).run();
  let discovered=0,qualified=0,duplicates=0,failed=0,audited=0,drafts=0,city=null,elements=[],provider="unknown";
  try{
@@ -199,8 +206,8 @@ async function engRun(env){
     .bind(b.id,b.dedupe,b.name,b.category,b.city,b.state,b.address||null,b.phone||null,b.email||null,b.website,b.domain,b.instagram||null,b.facebook||null,b.evidence.source,b.evidence.activity_signal,confidence,score,started,started,JSON.stringify(b.evidence),b.source).run();
    if(ins.meta&&ins.meta.changes)discovered++;else duplicates++;
   }
-  const candidates=await env.DB.prepare("SELECT * FROM businesses WHERE website_status='unverified' ORDER BY created_at ASC LIMIT 20").all();
-  for(const original of candidates.results){
+  const candidates=await env.DB.prepare("SELECT * FROM businesses WHERE website_status='unverified' ORDER BY created_at ASC LIMIT 50").all();
+  await engPool(candidates.results,5,async original=>{
    try{
     const tags=await engOsmDetails(original.source_url);
     const website=original.website_url||engUrl(engTag(tags,["contact:website","website","url"]));
@@ -222,7 +229,7 @@ async function engRun(env){
     if(a.audit){const x=a.audit;await env.DB.prepare("INSERT INTO website_audits(id,business_id,checked_at,requested_url,final_url,http_status,ssl_valid,mobile_test_status,desktop_test_status,broken_links_count,findings_json,evidence_json,links_checked,broken_links_json,forms_detected,contact_emails_json,mobile_heuristic_score,audit_score) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,biz.id,x.checked,x.requested,x.final,x.http,x.ssl,x.mobile,x.desktop,x.brokenLinks.length,JSON.stringify(a.findings),JSON.stringify(x.evidence),x.linksChecked,JSON.stringify(x.brokenLinks),x.forms,JSON.stringify(x.emails),mobileScore,x.auditScore).run();audited++;}else{await env.DB.prepare("INSERT INTO website_audits(id,business_id,checked_at,requested_url,final_url,http_status,ssl_valid,mobile_test_status,desktop_test_status,broken_links_count,findings_json,evidence_json,links_checked,broken_links_json,forms_detected,contact_emails_json,mobile_heuristic_score,audit_score) VALUES(?,?,?,NULL,NULL,NULL,NULL,?,?,0,?,'{}',0,'[]',0,'[]',0,0)").bind(uuid(),biz.id,new Date().toISOString(),a.status,"not_applicable",JSON.stringify(a.findings)).run();audited++;}
     if(isQualified){qualified++;const refreshed=await env.DB.prepare("SELECT * FROM businesses WHERE id=?").bind(biz.id).first();const o=engOutreach(refreshed,a.findings);await env.DB.prepare("INSERT INTO outreach_drafts(id,business_id,channel,subject,message,strategy,status) VALUES(?,?,?,?,?,?,'draft')").bind(uuid(),biz.id,refreshed.email?"email":"manual_review",o.subject,o.message,o.strategy).run();drafts++;}
    }catch(e){failed++;}
-  }
+  });
   const status=failed?"partial":"completed";
   await env.DB.prepare("UPDATE research_runs SET completed_at=?,discovered_count=?,qualified_count=?,duplicate_count=?,failed_count=?,status=?,notes=? WHERE id=?").bind(new Date().toISOString(),discovered,qualified,duplicates,failed,status,"Provider: "+provider+" · "+city.city+", "+city.state+" · "+elements.length+" map objects scanned · "+audited+" website checks · "+drafts+" unsent drafts · trading status not independently confirmed",runId).run();
   return {runId,status,provider,city:city.city,state:city.state,osmObjects:elements.length,discovered,qualified,duplicates,failed,audited,drafts};
