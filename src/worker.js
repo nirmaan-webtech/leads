@@ -401,30 +401,15 @@ export default {
     return html(shell("Overview",`<div class="grid">${cards}</div><div class="panel"><div class="row"><div><h2>Research engine</h2><div class="hint">OpenStreetMap public data · one city per run · duplicate filtering · up to 10 homepage checks · unsent outreach drafts. Map listing does not prove current trading.</div></div><button class="btn" id="runNow">Run discovery now</button></div><p class="hint" id="runStatus">Automatic schedule: every 2 hours · India city rotation · 50 target records (actual qualified count may be lower).</p></div><script>document.getElementById("runNow").addEventListener("click",async()=>{const b=document.getElementById("runNow"),s=document.getElementById("runStatus");b.disabled=true;b.textContent="Running…";s.textContent="Scanning city and checking candidate websites…";try{const r=await fetch("/api/run",{method:"POST"}),d=await r.json();s.textContent=r.ok?("Run "+d.status+" · "+d.city+", "+d.state+" · found "+d.discovered+" · qualified "+d.qualified+" · duplicates "+d.duplicates+" · audits "+d.audited+" · drafts "+d.drafts):("Run failed: "+(d.detail||d.error));}catch(e){s.textContent="Request failed: "+e.message;}finally{b.disabled=false;b.textContent="Run discovery now";}});</script><div class="panel"><h2>Recent research runs</h2><div class="tablewrap"><table><thead><tr><th>Started</th><th>Status</th><th>Found</th><th>Qualified</th><th>Notes</th></tr></thead><tbody>${rows||'<tr><td colspan="5" class="empty">No runs yet</td></tr>'}</tbody></table></div></div>`));
    }
    const tablePage=async(title,active,endpoint,cols)=>{
-     const filterFields=active==="Businesses"?[
-       ["q","Search name / city / category","text"],["country","Country","select"],["city","City","select"],["state","State","select"],["category","Category","select"],
-       ["status","Qualification","select","",["pending","qualified","screened_out"]],
-       ["websiteStatus","Website status","select","",["missing","unverified","reachable","unreachable","http_error","excluded_non_target"]],
-       ["website","Website URL","select","",["missing","present"]],
-       ["contact","Contact","select","",["email","phone","both"]],
-       ["activity","Activity","select","",["active","unverified","inactive"]],
-       ["minScore","Min opportunity score","number"]
-     ]:active==="Audits"?[
-       ["q","Search business / URL","text"],["status","Mobile check","select","",["viewport_meta_present","viewport_meta_missing","not_applicable"]],["minScore","Min audit score","number"],["maxScore","Max audit score","number"]
-     ]:[
-       ["q","Search business / subject / message","text"],["status","Draft status","select","",["draft","approved","sent","archived"]],["channel","Channel","select","",["email","manual_review","whatsapp"]]
-     ];
-     const controls=filterFields.map(([name,label,type,,opts])=>type==="select"?'<label class="filterField">'+label+'<select name="'+name+'"><option value="">All</option>'+(opts||[]).map(v=>'<option value="'+v+'">'+v.replaceAll("_"," ")+'</option>').join("")+'</select></label>':'<label class="filterField">'+label+'<input name="'+name+'" type="'+type+'" '+(type==="number"?'min="0" max="100"':'')+' placeholder="'+label+'"></label>').join("");
      const exportLink=active==="Businesses"?'<a class="btn secondary" id="exportRows" href="/api/export.csv">Export filtered CSV</a>':'';
      return html(shell(title,`<div class="panel"><div class="row"><div><h2>${title}</h2><div class="hint">Filter records and use row-level actions. Maximum 100 records per view.</div></div>${exportLink}</div>
-       <form id="filters" class="filters">${controls}<div class="filterActions"><button class="btn" type="submit">Apply filters</button><button class="btn secondary" type="reset">Clear</button></div></form>
        <div class="hint" id="resultCount" style="margin:10px 0">Loading records…</div>
        <div class="tablewrap"><table id="data"><thead><tr><th class="actionHead">Actions</th>${cols.map(x=>'<th>'+x[1]+'</th>').join("")}</tr></thead><tbody><tr><td colspan="${cols.length+1}" class="empty">Loading…</td></tr></tbody></table></div></div>
        <dialog id="recordDialog" style="max-width:680px;width:90%;background:#111827;color:#edf2fb;border:1px solid #314059;border-radius:12px;padding:22px"><button class="btn secondary" id="closeDialog" style="float:right">Close</button><h2>Record details</h2><pre id="recordDetails" style="white-space:pre-wrap;overflow-wrap:anywhere;color:#d8e2f2"></pre></dialog>
        <style>.filters{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin-top:18px}.filterField{font-size:12px;color:#96a3b8;margin:0}.filterField input,.filterField select{margin-top:6px}.filterActions{display:flex;gap:8px;align-items:end}.actionBtn{padding:7px 9px;margin:2px;border:1px solid #314059;border-radius:7px;background:#1b2b43;color:#edf2fb;cursor:pointer;font-size:12px}.actionBtn:hover{border-color:#d7b56d}.actions{min-width:160px}.actionSticky{position:sticky;left:0;z-index:2;background:#101827;box-shadow:5px 0 8px rgba(0,0,0,.22)}.actionHead{position:sticky;left:0;z-index:3;background:#18243a}.filters input,.filters select{min-width:0}@media(max-width:900px){.filters{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:520px){.filters{grid-template-columns:1fr}.filterActions{align-items:center}}</style>
        <script>
        (function(){
-        const form=document.getElementById("filters"),body=document.querySelector("#data tbody"),count=document.getElementById("resultCount"),dialog=document.getElementById("recordDialog"),details=document.getElementById("recordDetails");
+        const body=document.querySelector("#data tbody"),count=document.getElementById("resultCount"),dialog=document.getElementById("recordDialog"),details=document.getElementById("recordDetails");
         const fields=${JSON.stringify(cols.map(x=>x[0]))},kind=${JSON.stringify(active)},endpoint=${JSON.stringify(endpoint)};
         const optionData="/api/filter-options";
         async function apiJson(url,options={}){
@@ -444,29 +429,6 @@ export default {
          if(!res.ok)throw new Error(data.detail||data.error||("HTTP "+res.status));
          return data;
         }
-        async function populateBusinessOptions(){
-         if(kind!=="Businesses")return;
-         const data=await apiJson(optionData);
-         const controls={country:form.elements.country,city:form.elements.city,state:form.elements.state,category:form.elements.category,websiteStatus:form.elements.websiteStatus,activity:form.elements.activity,status:form.elements.status};
-         function fill(name,items,selected=""){
-          const el=controls[name],previous=selected||el.value;el.innerHTML='<option value="">All</option>';
-          for(const item of items){if(!item.value)continue;const opt=document.createElement("option");opt.value=item.value;opt.textContent=item.value;el.appendChild(opt)}
-          if([...el.options].some(o=>o.value===previous))el.value=previous;
-         }
-         function update(){
-          const country=controls.country.value,state=controls.state.value,city=controls.city.value;
-          fill("state",data.states.filter(x=>!country||x.country===country),state);
-          fill("city",data.cities.filter(x=>(!country||x.country===country)&&(!state||x.state===state)),city);
-          fill("category",data.categories.filter(x=>(!country||x.country===country)&&(!state||x.state===state)&&(!city||x.city===city)),controls.category.value);
-         }
-         fill("country",data.countries);fill("city",data.cities);fill("state",data.states);fill("category",data.categories);
-         fill("websiteStatus",data.websiteStatuses);fill("activity",data.activities);fill("status",data.qualifications);
-         controls.country.addEventListener("change",()=>{controls.city.value="";controls.state.value="";controls.category.value="";update()});
-         controls.state.addEventListener("change",()=>{controls.city.value="";update()});
-         controls.city.addEventListener("change",()=>{controls.category.value="";update()});
-         update();
-        }
-
         let records=[],loadSequence=0,activeLoad=null;
         function esc(v){return String(v??"—")}
         function button(action,label){return '<button type="button" class="actionBtn" data-action="'+action+'">'+label+'</button>'}
@@ -489,8 +451,7 @@ export default {
          const sequence=++loadSequence;
          if(activeLoad)activeLoad.abort();
          activeLoad=new AbortController();
-         const params=new URLSearchParams(new FormData(form));for(const [k,v] of [...params])if(!v)params.delete(k);
-         const url=endpoint+(params.size?"?"+params.toString():"");
+         const url=endpoint;
          count.textContent="Loading records…";
          try{
           const rows=await apiJson(url,{signal:activeLoad.signal});
@@ -505,7 +466,6 @@ export default {
           body.innerHTML='<tr><td colspan="'+(fields.length+1)+'" class="empty">'+message.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))+'</td></tr>';
          }
         }
-        form.addEventListener("submit",e=>{e.preventDefault();load()});form.addEventListener("reset",()=>setTimeout(load,0));
         document.getElementById("closeDialog").addEventListener("click",()=>dialog.close());
         body.addEventListener("click",async e=>{
          const b=e.target.closest("button[data-action]");if(!b)return;const r=records[Number(b.dataset.index)];if(!r)return;
@@ -515,7 +475,6 @@ export default {
          if(action==="website"){const target=r.website_url||r.requested_url;if(target){const u=new URL(target,location.origin);if(["http:","https:"].includes(u.protocol))window.open(u.href,"_blank","noopener,noreferrer")}return}
         });
         load();
-        if(kind==="Businesses")populateBusinessOptions().catch(e=>{count.textContent="Filter options unavailable: "+e.message;});
        })();
        </script>`,active));
    };
