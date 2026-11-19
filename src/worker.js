@@ -9,10 +9,12 @@ const htmlHeaders = { "content-type": "text/html; charset=utf-8", "x-content-typ
 const enc = new TextEncoder();
 
 function validRequestOrigin(req) {
-  const origin=req.headers.get("Origin");
-  if(!origin)return false;
   const trustedOrigins=new Set([new URL(req.url).origin,"https://nirmaan-lead-hunter.pages.dev"]);
-  return trustedOrigins.has(origin);
+  const origin=req.headers.get("Origin");
+  if(origin)return trustedOrigins.has(origin);
+  const referer=req.headers.get("Referer");
+  if(!referer)return false;
+  try{return trustedOrigins.has(new URL(referer).origin)}catch{return false}
 }
 function json(data, status=200) { return new Response(JSON.stringify(data), {status, headers}); }
 function html(body, status=200) { return new Response(body, {status, headers:htmlHeaders}); }
