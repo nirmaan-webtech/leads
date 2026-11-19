@@ -8,6 +8,12 @@ const headers = {
 const htmlHeaders = { "content-type": "text/html; charset=utf-8", "x-content-type-options":"nosniff", "x-frame-options":"DENY", "referrer-policy":"strict-origin-when-cross-origin", "content-security-policy":"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'", "cache-control":"no-store" };
 const enc = new TextEncoder();
 
+function validRequestOrigin(req) {
+  const origin=req.headers.get("Origin");
+  if(!origin)return false;
+  const trustedOrigins=new Set([new URL(req.url).origin,"https://nirmaan-lead-hunter.pages.dev"]);
+  return trustedOrigins.has(origin);
+}
 function json(data, status=200) { return new Response(JSON.stringify(data), {status, headers}); }
 function html(body, status=200) { return new Response(body, {status, headers:htmlHeaders}); }
 function escapeHtml(s="") { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
@@ -214,7 +220,7 @@ async function engRun(env){
 
 async function api(req, env, path) {
   if(path==="/api/run" && req.method==="POST"){
-    if(req.headers.get("Origin")!==new URL(req.url).origin)return json({error:"Invalid request origin."},403);
+    if(!validRequestOrigin(req))return json({error:"Invalid request origin."},403);
     const last=await env.DB.prepare("SELECT value FROM app_settings WHERE key='last_manual_run'").first();
     if(last&&Date.now()-Date.parse(last.value)<60*1000)return json({error:"Please wait 60 seconds between manual runs."},429);
     await env.DB.prepare("INSERT OR REPLACE INTO app_settings(key,value,updated_at) VALUES('last_manual_run',?,CURRENT_TIMESTAMP)").bind(new Date().toISOString()).run();
@@ -232,7 +238,7 @@ async function api(req, env, path) {
     return json({businesses:b.n,audits:a.n,runs:r.n,drafts:o.n,qualified:qualified.n,recentRuns:latest.results});
   }
   if (path==="/api/records/delete" && req.method==="POST") {
-    if(req.headers.get("Origin")!==new URL(req.url).origin)return json({error:"Invalid request origin."},403);
+    if(!validRequestOrigin(req))return json({error:"Invalid request origin."},403);
     const data=await body(req),resource=String(data.resource||""),allowed={audits:"website_audits",outreach:"outreach_drafts",runs:"research_runs"};
     if(!Object.prototype.hasOwnProperty.call(allowed,resource))return json({error:"Invalid record type."},400);
     const ids=[...new Set((Array.isArray(data.ids)?data.ids:[]).filter(x=>typeof x==="string"&&x.length<=128))].slice(0,100);
@@ -241,7 +247,7 @@ async function api(req, env, path) {
     return json({ok:true,deleted:result.meta?.changes??ids.length});
   }
   if (path==="/api/businesses/delete" && req.method==="POST") {
-    if(req.headers.get("Origin")!==new URL(req.url).origin)return json({error:"Invalid request origin."},403);
+    if(!validRequestOrigin(req))return json({error:"Invalid request origin."},403);
     const data=await body(req), ids=[...new Set((Array.isArray(data.ids)?data.ids:[]).filter(x=>typeof x==="string"&&x.length<=128))].slice(0,100);
     if(!ids.length)return json({error:"Select at least one lead."},400);
     const marks=ids.map(()=>"?").join(",");
@@ -328,7 +334,7 @@ export default {
      return new Response(null,{status:303,headers:{"location":"/","set-cookie":"nlh_session="+token+"; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=43200"}});
    }
    if(path==="/logout" && req.method==="POST"){
-     if(req.headers.get("Origin")!==new URL(req.url).origin)return json({error:"Invalid request origin."},403);
+     if(!validRequestOrigin(req))return json({error:"Invalid request origin."},403);
      const raw=req.headers.get("Cookie")||"";
      const token=raw.split(";").map(x=>x.trim()).find(x=>x.startsWith("nlh_session="))?.slice(12);
      if(token && /^[a-f0-9]{64}$/.test(token)) await env.DB.prepare("DELETE FROM app_sessions WHERE token_hash=?").bind(await sha(token)).run();
