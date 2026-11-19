@@ -13,7 +13,7 @@ function validRequestOrigin(req) {
   const origin=req.headers.get("Origin");
   if(origin)return trustedOrigins.has(origin);
   const referer=req.headers.get("Referer");
-  if(!referer)return false;
+  if(!referer)return (req.headers.get("Content-Type")||"").toLowerCase().startsWith("application/json");
   try{return trustedOrigins.has(new URL(referer).origin)}catch{return false}
 }
 function json(data, status=200) { return new Response(JSON.stringify(data), {status, headers}); }
@@ -253,12 +253,13 @@ async function api(req, env, path) {
     const data=await body(req), ids=[...new Set((Array.isArray(data.ids)?data.ids:[]).filter(x=>typeof x==="string"&&x.length<=128))].slice(0,100);
     if(!ids.length)return json({error:"Select at least one lead."},400);
     const marks=ids.map(()=>"?").join(",");
-    await env.DB.batch([
+    const results=await env.DB.batch([
       env.DB.prepare("DELETE FROM website_audits WHERE business_id IN ("+marks+")").bind(...ids),
       env.DB.prepare("DELETE FROM outreach_drafts WHERE business_id IN ("+marks+")").bind(...ids),
       env.DB.prepare("DELETE FROM businesses WHERE id IN ("+marks+")").bind(...ids)
     ]);
-    return json({ok:true,deleted:ids.length});
+    const deleted=results[2]?.meta?.changes??0;
+    return json({ok:true,deleted,requested:ids.length});
   }
   if (path==="/api/businesses") {
     const u=new URL(req.url), q=u.searchParams.get("q")||"", status=u.searchParams.get("status")||"",city=u.searchParams.get("city")||"",state=u.searchParams.get("state")||"",website=u.searchParams.get("website")||"",contact=u.searchParams.get("contact")||"",minScore=Number(u.searchParams.get("minScore")||0),sort=u.searchParams.get("sort")==="oldest"?"ASC":"DESC";
